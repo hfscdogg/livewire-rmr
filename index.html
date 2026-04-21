@@ -1,0 +1,762 @@
+<!-- ==========================================================================
+  LIVEWIRE RMR DASHBOARD
+  ==========================================================================
+  Data Source: Google Sheets ID 1Zm-0hEHdtpxbmnXpgLSCcsJcsdyOwXQ_agKBAWinglw
+
+  SETUP (to enable live data from Google Sheets):
+  1. Open the spreadsheet in Google Sheets
+  2. File > Share > Publish to web > Entire Document > CSV > Publish
+  3. Copy the published URL and replace PUBLISHED_CSV_BASE below
+  4. Update SHEET_GIDS with the actual gid values for each year tab
+
+  Current data is hardcoded as a snapshot (Apr 2026).
+  Auto-refresh is enabled if live CSV URLs are configured.
+========================================================================== -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RMR Dashboard — Livewire</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            navy:    '#0D1B2A',
+            electric:'#1E6FE8',
+            gold:    '#F59E0B',
+            green:   '#10B981',
+            red:     '#EF4444',
+            purple:  '#8B5CF6',
+          },
+          fontFamily: {
+            display: ['Syne', 'sans-serif'],
+            body:    ['DM Sans', 'sans-serif'],
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    :root {
+      --navy:    #0D1B2A;
+      --white:   #F8F9FA;
+      --electric:#1E6FE8;
+      --gold:    #F59E0B;
+      --green:   #10B981;
+      --red:     #EF4444;
+      --purple:  #8B5CF6;
+      --card-bg: #FFFFFF;
+      --border:  #E5E7EB;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: 'DM Sans', sans-serif;
+      margin: 0;
+      background: var(--white);
+      color: var(--navy);
+    }
+    h1, h2, h3, h4, h5 { font-family: 'Syne', sans-serif; }
+
+    .kpi-card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1.25rem;
+      opacity: 0;
+      animation: fadeInUp 0.5s ease forwards;
+    }
+    .kpi-card:nth-child(1) { animation-delay: 0ms; }
+    .kpi-card:nth-child(2) { animation-delay: 100ms; }
+    .kpi-card:nth-child(3) { animation-delay: 200ms; }
+    .kpi-card:nth-child(4) { animation-delay: 300ms; }
+
+    @keyframes fadeInUp {
+      from { opacity: 0; transform: translateY(16px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    .progress-bar-bg {
+      background: #E5E7EB;
+      border-radius: 999px;
+      height: 8px;
+      overflow: hidden;
+    }
+    .progress-bar-fill {
+      height: 100%;
+      border-radius: 999px;
+      transition: width 1.2s ease;
+      width: 0;
+    }
+
+    .tab-btn {
+      padding: 0.5rem 1rem;
+      font-weight: 600;
+      border-bottom: 3px solid transparent;
+      cursor: pointer;
+      transition: all 0.2s;
+      color: #6B7280;
+      background: none;
+      border-top: none;
+      border-left: none;
+      border-right: none;
+      font-family: 'DM Sans', sans-serif;
+      font-size: 0.95rem;
+      white-space: nowrap;
+    }
+    .tab-btn.active { color: var(--electric); border-bottom-color: var(--electric); }
+    .tab-btn:hover  { color: var(--navy); }
+
+    .chart-card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1.25rem;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.25rem;
+      font-size: 0.75rem;
+      font-weight: 600;
+      padding: 0.2rem 0.55rem;
+      border-radius: 999px;
+    }
+    .badge-up   { background: #D1FAE5; color: #065F46; }
+    .badge-down { background: #FEE2E2; color: #991B1B; }
+    .badge-flat { background: #F3F4F6; color: #6B7280; }
+
+    .div-bar-security { background: var(--electric); }
+    .div-bar-invision { background: var(--purple); }
+    .div-bar-bg       { background: #E5E7EB; border-radius: 4px; height: 6px; overflow: hidden; }
+    .div-bar-fill     { height: 100%; border-radius: 4px; transition: width 1.2s ease; width: 0; }
+
+    table { border-collapse: collapse; width: 100%; }
+    th, td { text-align: left; }
+    tr:last-child td { border-bottom: none; }
+  </style>
+</head>
+<body>
+
+<!-- ===== HEADER ===== -->
+<div style="background:white; border-bottom:1px solid var(--border); padding:1rem 1.5rem;">
+  <div class="max-w-7xl mx-auto flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
+    <div>
+      <h1 class="text-2xl font-bold text-navy tracking-tight font-display">LIVEWIRE</h1>
+      <p class="text-sm text-gray-500 font-display">Recurring Monthly Revenue</p>
+    </div>
+    <div class="text-right text-sm text-gray-500">
+      <div id="hdr-period">April 2026 · Data through March 2026</div>
+      <div id="hdr-refresh" class="text-xs text-gray-400 mt-0.5">Snapshot: Apr 21, 2026</div>
+    </div>
+  </div>
+</div>
+
+<div class="max-w-7xl mx-auto px-4 sm:px-6 py-6">
+
+  <!-- ===== KPI HERO ROW ===== -->
+  <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6" id="kpi-row">
+
+    <!-- Current Month RMR -->
+    <div class="kpi-card">
+      <div class="flex items-center justify-between mb-1">
+        <span class="text-sm font-medium text-gray-500">💰 Mar 2026 RMR</span>
+        <span id="badge-mom" class="badge badge-up">↑ +5.0%</span>
+      </div>
+      <div class="text-2xl font-bold font-display text-navy">$48,796</div>
+      <div class="text-xs text-gray-400 mt-1">vs Feb 2026: $44,026</div>
+      <div class="mt-3 flex gap-2 text-xs">
+        <span class="text-electric font-medium">Security $31,963</span>
+        <span class="text-gray-300">·</span>
+        <span class="text-purple font-medium">Invision $16,833</span>
+      </div>
+    </div>
+
+    <!-- 2026 YTD -->
+    <div class="kpi-card">
+      <div class="flex items-center justify-between mb-1">
+        <span class="text-sm font-medium text-gray-500">📊 2026 YTD</span>
+        <span class="badge badge-up">↑ +3.4%</span>
+      </div>
+      <div class="text-2xl font-bold font-display text-navy">$136,023</div>
+      <div class="progress-bar-bg my-2">
+        <div class="progress-bar-fill bg-electric" id="prog-ytd"></div>
+      </div>
+      <div class="flex justify-between text-xs text-gray-400">
+        <span>vs 2025 YTD: $131,512</span>
+        <span id="prog-ytd-pct">27%</span>
+      </div>
+      <div class="text-xs text-gray-400 mt-1">of 2025 full-year pace</div>
+    </div>
+
+    <!-- YOY Growth -->
+    <div class="kpi-card">
+      <div class="flex items-center justify-between mb-1">
+        <span class="text-sm font-medium text-gray-500">📈 Q1 YOY Growth</span>
+        <span class="badge badge-up">↑ Growing</span>
+      </div>
+      <div class="text-2xl font-bold font-display text-green-600">+3.32%</div>
+      <div class="text-xs text-gray-400 mt-1 mb-2">Jan–Mar 2026 vs Jan–Mar 2025</div>
+      <div class="space-y-1 text-xs">
+        <div class="flex justify-between"><span class="text-gray-500">Jan</span><span class="text-green-600 font-medium">+1.74%</span></div>
+        <div class="flex justify-between"><span class="text-gray-500">Feb</span><span class="text-green-600 font-medium">+2.74%</span></div>
+        <div class="flex justify-between"><span class="text-gray-500">Mar</span><span class="text-green-600 font-medium">+3.32%</span></div>
+      </div>
+    </div>
+
+    <!-- 2025 Annual -->
+    <div class="kpi-card">
+      <div class="flex items-center justify-between mb-1">
+        <span class="text-sm font-medium text-gray-500">🗓 2025 Annual RMR</span>
+        <span class="badge badge-flat">Full Year</span>
+      </div>
+      <div class="text-2xl font-bold font-display text-navy">$503,218</div>
+      <div class="text-xs text-gray-400 mt-1 mb-3">Avg $41,935/mo</div>
+      <div>
+        <div class="flex justify-between text-xs text-gray-500 mb-1">
+          <span>Security</span><span class="font-medium text-navy">$345,423 · 68.6%</span>
+        </div>
+        <div class="div-bar-bg mb-2"><div class="div-bar-fill div-bar-security" style="width:68.6%"></div></div>
+        <div class="flex justify-between text-xs text-gray-500 mb-1">
+          <span>Invision</span><span class="font-medium text-navy">$157,796 · 31.4%</span>
+        </div>
+        <div class="div-bar-bg"><div class="div-bar-fill div-bar-invision" style="width:31.4%"></div></div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ===== SERVICE SPLIT BANNER ===== -->
+  <div class="chart-card mb-6">
+    <div class="flex flex-col md:flex-row items-start md:items-center gap-6">
+      <div class="md:min-w-[220px]">
+        <div class="text-sm font-medium text-gray-500 mb-1">🔧 Mar 2026 Service Mix</div>
+        <div class="flex gap-6 mt-2">
+          <div>
+            <div class="text-xs text-gray-400 mb-0.5">Security</div>
+            <div class="text-2xl font-bold font-display text-electric">65.5%</div>
+            <div class="text-sm text-gray-500">$31,963</div>
+          </div>
+          <div class="w-px bg-gray-200 self-stretch"></div>
+          <div>
+            <div class="text-xs text-gray-400 mb-0.5">Invision</div>
+            <div class="text-2xl font-bold font-display" style="color:var(--purple)">34.5%</div>
+            <div class="text-sm text-gray-500">$16,833</div>
+          </div>
+        </div>
+        <div class="mt-3 text-xs text-gray-400">Invision growing fastest (+21.4% vs Feb)</div>
+      </div>
+      <div class="flex-1 w-full" style="height:100px; max-height:100px;">
+        <canvas id="sparkline-total"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== TABS ===== -->
+  <div class="flex gap-1 border-b border-gray-200 mb-5 overflow-x-auto">
+    <button class="tab-btn active" data-tab="trends">Monthly Trends</button>
+    <button class="tab-btn" data-tab="yoy">YOY Comparison</button>
+    <button class="tab-btn" data-tab="breakdown">Service Breakdown</button>
+    <button class="tab-btn" data-tab="table">Data Table</button>
+  </div>
+
+  <!-- ===== TAB: Monthly Trends ===== -->
+  <div id="tab-trends" class="tab-content">
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-5">
+      <!-- Main trend chart -->
+      <div class="chart-card lg:col-span-2">
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="font-semibold text-navy font-display">Monthly RMR — All Time</h3>
+          <div class="flex gap-3 text-xs text-gray-500">
+            <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-full bg-electric"></span>Security</span>
+            <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-full" style="background:var(--purple)"></span>Invision</span>
+            <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-full bg-gold"></span>Total</span>
+          </div>
+        </div>
+        <div style="height:280px;">
+          <canvas id="chart-trends"></canvas>
+        </div>
+      </div>
+      <!-- Doughnut -->
+      <div class="chart-card flex flex-col items-center justify-center">
+        <h3 class="font-semibold text-navy font-display mb-4 self-start">2025 Revenue Mix</h3>
+        <div style="height:200px; width:200px;">
+          <canvas id="chart-donut"></canvas>
+        </div>
+        <div class="mt-4 space-y-2 w-full">
+          <div class="flex items-center justify-between text-sm">
+            <span class="flex items-center gap-2"><span class="inline-block w-3 h-3 rounded bg-electric"></span>Security</span>
+            <span class="font-semibold">$345,423</span>
+          </div>
+          <div class="flex items-center justify-between text-sm">
+            <span class="flex items-center gap-2"><span class="inline-block w-3 h-3 rounded" style="background:var(--purple)"></span>Invision</span>
+            <span class="font-semibold">$157,796</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== TAB: YOY Comparison ===== -->
+  <div id="tab-yoy" class="tab-content hidden">
+    <div class="chart-card">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="font-semibold text-navy font-display">2025 vs 2026 — Monthly RMR</h3>
+        <div class="flex gap-3 text-xs text-gray-500">
+          <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-full bg-gray-400"></span>2025</span>
+          <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-full bg-electric"></span>2026</span>
+        </div>
+      </div>
+      <div style="height:300px;">
+        <canvas id="chart-yoy"></canvas>
+      </div>
+      <div class="mt-4 grid grid-cols-3 gap-4 pt-4 border-t border-gray-100">
+        <div class="text-center">
+          <div class="text-xs text-gray-400 mb-1">Jan Growth</div>
+          <div class="text-lg font-bold font-display text-green-600">+1.74%</div>
+          <div class="text-xs text-gray-500">$43,201 vs $42,450</div>
+        </div>
+        <div class="text-center">
+          <div class="text-xs text-gray-400 mb-1">Feb Growth</div>
+          <div class="text-lg font-bold font-display text-green-600">+2.74%</div>
+          <div class="text-xs text-gray-500">$44,026 vs $42,384</div>
+        </div>
+        <div class="text-center">
+          <div class="text-xs text-gray-400 mb-1">Mar Growth</div>
+          <div class="text-lg font-bold font-display text-green-600">+3.32%</div>
+          <div class="text-xs text-gray-500">$48,796 vs $46,679</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== TAB: Service Breakdown ===== -->
+  <div id="tab-breakdown" class="tab-content hidden">
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+      <div class="chart-card">
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="font-semibold text-navy font-display">Security Monthly RMR</h3>
+          <span class="badge badge-up">↑ Trending</span>
+        </div>
+        <div style="height:250px;">
+          <canvas id="chart-security"></canvas>
+        </div>
+      </div>
+      <div class="chart-card">
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="font-semibold text-navy font-display">Invision Monthly RMR</h3>
+          <span class="badge badge-up">↑ Trending</span>
+        </div>
+        <div style="height:250px;">
+          <canvas id="chart-invision"></canvas>
+        </div>
+      </div>
+    </div>
+    <!-- 2026 Breakdown stats -->
+    <div class="chart-card mt-5">
+      <h3 class="font-semibold text-navy font-display mb-4">2026 Q1 — Service Detail</h3>
+      <div class="overflow-x-auto">
+        <table class="text-sm">
+          <thead>
+            <tr class="text-left text-gray-500 border-b border-gray-200">
+              <th class="py-2 px-3 font-medium">Month</th>
+              <th class="py-2 px-3 font-medium text-right">Security</th>
+              <th class="py-2 px-3 font-medium text-right">Invision</th>
+              <th class="py-2 px-3 font-medium text-right">Total</th>
+              <th class="py-2 px-3 font-medium text-right">Security %</th>
+              <th class="py-2 px-3 font-medium text-right">Invision %</th>
+            </tr>
+          </thead>
+          <tbody id="breakdown-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== TAB: Data Table ===== -->
+  <div id="tab-table" class="tab-content hidden">
+    <div class="chart-card">
+      <h3 class="font-semibold text-navy font-display mb-4">Full Monthly RMR History</h3>
+      <div class="overflow-x-auto">
+        <table class="text-sm">
+          <thead>
+            <tr class="text-left text-gray-500 border-b border-gray-200">
+              <th class="py-2 px-3 font-medium">Month</th>
+              <th class="py-2 px-3 font-medium text-right">Security</th>
+              <th class="py-2 px-3 font-medium text-right">Invision</th>
+              <th class="py-2 px-3 font-medium text-right">Total RMR</th>
+              <th class="py-2 px-3 font-medium text-right">YOY</th>
+            </tr>
+          </thead>
+          <tbody id="table-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /max-w-7xl -->
+
+<script>
+// ============================================================
+// DATA — hardcoded snapshot (Apr 21 2026)
+// To enable live data: publish the Google Sheet to web as CSV
+// and update the fetch URLs below.
+// ============================================================
+
+const DATA = {
+  months_2025: ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'],
+  security_2025: [28586.46, 29219.32, 30873.99, 28424.05, 28096.46, 27525.77, 30404.68, 29001.65, 25619.67, 28576.47, 29508.69, 29585.51],
+  invision_2025: [13863.08, 13164.59, 15804.52, 14383.85, 12298.30, 10806.75, 15178.04, 13257.88, 11687.04, 12024.50, 11738.25, 13588.89],
+  total_2025:    [42449.54, 42383.91, 46678.51, 42807.90, 40394.76, 38332.52, 45582.72, 42259.53, 37306.71, 40600.97, 41246.94, 43174.40],
+
+  months_2026: ['Jan','Feb','Mar'],
+  security_2026: [30405.16, 30180.07, 31963.08],
+  invision_2026: [12796.01, 13845.71, 16833.33],
+  total_2026:    [43201.17, 44025.78, 48796.41],
+};
+
+// Derived
+const ytd2026 = DATA.total_2026.reduce((s, v) => s + v, 0); // 136,023.36
+const ytd2025same = DATA.total_2025.slice(0, DATA.months_2026.length).reduce((s, v) => s + v, 0);
+
+// ============================================================
+// CHARTS
+// ============================================================
+
+// Shared chart defaults
+Chart.defaults.font.family = "'DM Sans', sans-serif";
+Chart.defaults.color = '#6B7280';
+
+function fmt(n) {
+  return '$' + Math.round(n).toLocaleString('en-US');
+}
+
+// --- Sparkline (header trend) ---
+(function() {
+  const ctx = document.getElementById('sparkline-total').getContext('2d');
+  const allLabels = [...DATA.months_2025.map(m => m + ' 2025'), ...DATA.months_2026.map(m => m + ' 2026')];
+  const allTotals = [...DATA.total_2025, ...DATA.total_2026];
+  const gradient = ctx.createLinearGradient(0, 0, 0, 100);
+  gradient.addColorStop(0, 'rgba(30,111,232,0.18)');
+  gradient.addColorStop(1, 'rgba(30,111,232,0)');
+  new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: allLabels,
+      datasets: [{
+        data: allTotals,
+        borderColor: '#1E6FE8',
+        backgroundColor: gradient,
+        borderWidth: 2.5,
+        fill: true,
+        tension: 0.35,
+        pointRadius: 0,
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false }, tooltip: {
+        backgroundColor: '#0D1B2A', titleColor: '#F8F9FA', bodyColor: '#F8F9FA',
+        cornerRadius: 8, displayColors: false,
+        callbacks: { label: item => 'RMR: ' + fmt(item.raw) }
+      }},
+      scales: { x: { display: false }, y: { display: false, min: 30000 } }
+    }
+  });
+})();
+
+// --- YTD progress bar ---
+setTimeout(() => {
+  const target2025annual = DATA.total_2025.reduce((s, v) => s + v, 0); // $503,218
+  const pct = Math.round((ytd2026 / target2025annual) * 100);
+  document.getElementById('prog-ytd').style.width = pct + '%';
+  document.getElementById('prog-ytd-pct').textContent = pct + '%';
+}, 400);
+
+// --- Main trend chart ---
+(function() {
+  const ctx = document.getElementById('chart-trends').getContext('2d');
+  const allLabels = [...DATA.months_2025.map(m => m + ' \'25'), ...DATA.months_2026.map(m => m + ' \'26')];
+  const allSec    = [...DATA.security_2025, ...DATA.security_2026];
+  const allInv    = [...DATA.invision_2025, ...DATA.invision_2026];
+  const allTot    = [...DATA.total_2025, ...DATA.total_2026];
+
+  // Gradient for total
+  const grad = ctx.createLinearGradient(0, 0, 0, 280);
+  grad.addColorStop(0, 'rgba(245,158,11,0.15)');
+  grad.addColorStop(1, 'rgba(245,158,11,0)');
+
+  new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: allLabels,
+      datasets: [
+        {
+          label: 'Total',
+          data: allTot,
+          borderColor: '#F59E0B',
+          backgroundColor: grad,
+          borderWidth: 2.5,
+          fill: true,
+          tension: 0.3,
+          pointRadius: 3,
+          pointBackgroundColor: '#F59E0B',
+          order: 0,
+        },
+        {
+          label: 'Security',
+          data: allSec,
+          borderColor: '#1E6FE8',
+          backgroundColor: 'transparent',
+          borderWidth: 2,
+          tension: 0.3,
+          pointRadius: 2,
+          pointBackgroundColor: '#1E6FE8',
+          order: 1,
+        },
+        {
+          label: 'Invision',
+          data: allInv,
+          borderColor: '#8B5CF6',
+          backgroundColor: 'transparent',
+          borderWidth: 2,
+          tension: 0.3,
+          pointRadius: 2,
+          pointBackgroundColor: '#8B5CF6',
+          order: 2,
+        }
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: '#0D1B2A', titleColor: '#F8F9FA', bodyColor: '#F8F9FA',
+          cornerRadius: 8,
+          callbacks: { label: item => item.dataset.label + ': ' + fmt(item.raw) }
+        }
+      },
+      scales: {
+        x: { grid: { color: '#F3F4F6' }, ticks: { maxRotation: 45 } },
+        y: {
+          grid: { color: '#F3F4F6' },
+          ticks: { callback: v => '$' + (v / 1000).toFixed(0) + 'k' },
+          min: 8000
+        }
+      }
+    }
+  });
+})();
+
+// --- Doughnut chart ---
+(function() {
+  const ctx = document.getElementById('chart-donut').getContext('2d');
+  const sec2025 = DATA.security_2025.reduce((s, v) => s + v, 0);
+  const inv2025 = DATA.invision_2025.reduce((s, v) => s + v, 0);
+  new Chart(ctx, {
+    type: 'doughnut',
+    data: {
+      labels: ['Security', 'Invision'],
+      datasets: [{
+        data: [sec2025, inv2025],
+        backgroundColor: ['#1E6FE8', '#8B5CF6'],
+        borderWidth: 0,
+        hoverOffset: 6,
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      cutout: '68%',
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: '#0D1B2A', titleColor: '#F8F9FA', bodyColor: '#F8F9FA',
+          cornerRadius: 8,
+          callbacks: { label: item => item.label + ': ' + fmt(item.raw) }
+        }
+      }
+    }
+  });
+})();
+
+// --- YOY comparison chart ---
+(function() {
+  const ctx = document.getElementById('chart-yoy').getContext('2d');
+  // Show all 12 months; 2026 only has 3
+  const labels = DATA.months_2025;
+  const data2026 = [...DATA.total_2026, ...Array(12 - DATA.total_2026.length).fill(null)];
+  new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: '2025',
+          data: DATA.total_2025,
+          backgroundColor: '#D1D5DB',
+          borderRadius: 4,
+          barPercentage: 0.8,
+        },
+        {
+          label: '2026',
+          data: data2026,
+          backgroundColor: '#1E6FE8',
+          borderRadius: 4,
+          barPercentage: 0.8,
+        }
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: '#0D1B2A', titleColor: '#F8F9FA', bodyColor: '#F8F9FA',
+          cornerRadius: 8,
+          callbacks: { label: item => item.dataset.label + ': ' + fmt(item.raw) }
+        }
+      },
+      scales: {
+        x: { grid: { display: false } },
+        y: {
+          grid: { color: '#F3F4F6' },
+          ticks: { callback: v => '$' + (v / 1000).toFixed(0) + 'k' },
+          min: 30000
+        }
+      }
+    }
+  });
+})();
+
+// --- Security line chart ---
+(function() {
+  const ctx = document.getElementById('chart-security').getContext('2d');
+  const labels = [...DATA.months_2025.map(m => m + ' \'25'), ...DATA.months_2026.map(m => m + ' \'26')];
+  const data   = [...DATA.security_2025, ...DATA.security_2026];
+  const grad = ctx.createLinearGradient(0, 0, 0, 250);
+  grad.addColorStop(0, 'rgba(30,111,232,0.2)');
+  grad.addColorStop(1, 'rgba(30,111,232,0)');
+  new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [{ label: 'Security', data, borderColor: '#1E6FE8', backgroundColor: grad, fill: true, borderWidth: 2.5, tension: 0.3, pointRadius: 3, pointBackgroundColor: '#1E6FE8' }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: '#0D1B2A', titleColor: '#F8F9FA', bodyColor: '#F8F9FA', cornerRadius: 8,
+          callbacks: { label: item => 'Security: ' + fmt(item.raw) }
+        }
+      },
+      scales: {
+        x: { grid: { color: '#F3F4F6' }, ticks: { maxRotation: 45 } },
+        y: { grid: { color: '#F3F4F6' }, ticks: { callback: v => '$' + (v / 1000).toFixed(0) + 'k' }, min: 22000 }
+      }
+    }
+  });
+})();
+
+// --- Invision line chart ---
+(function() {
+  const ctx = document.getElementById('chart-invision').getContext('2d');
+  const labels = [...DATA.months_2025.map(m => m + ' \'25'), ...DATA.months_2026.map(m => m + ' \'26')];
+  const data   = [...DATA.invision_2025, ...DATA.invision_2026];
+  const grad = ctx.createLinearGradient(0, 0, 0, 250);
+  grad.addColorStop(0, 'rgba(139,92,246,0.2)');
+  grad.addColorStop(1, 'rgba(139,92,246,0)');
+  new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [{ label: 'Invision', data, borderColor: '#8B5CF6', backgroundColor: grad, fill: true, borderWidth: 2.5, tension: 0.3, pointRadius: 3, pointBackgroundColor: '#8B5CF6' }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: '#0D1B2A', titleColor: '#F8F9FA', bodyColor: '#F8F9FA', cornerRadius: 8,
+          callbacks: { label: item => 'Invision: ' + fmt(item.raw) }
+        }
+      },
+      scales: {
+        x: { grid: { color: '#F3F4F6' }, ticks: { maxRotation: 45 } },
+        y: { grid: { color: '#F3F4F6' }, ticks: { callback: v => '$' + (v / 1000).toFixed(0) + 'k' }, min: 8000 }
+      }
+    }
+  });
+})();
+
+// --- Breakdown table (2026) ---
+(function() {
+  const body = document.getElementById('breakdown-body');
+  const rows = DATA.months_2026.map((m, i) => {
+    const sec = DATA.security_2026[i], inv = DATA.invision_2026[i], tot = DATA.total_2026[i];
+    const secPct = ((sec / tot) * 100).toFixed(1);
+    const invPct = ((inv / tot) * 100).toFixed(1);
+    return `<tr class="border-b border-gray-100 hover:bg-gray-50">
+      <td class="py-2 px-3 font-medium text-gray-700">${m} 2026</td>
+      <td class="py-2 px-3 text-right text-electric font-medium">${fmt(sec)}</td>
+      <td class="py-2 px-3 text-right font-medium" style="color:var(--purple)">${fmt(inv)}</td>
+      <td class="py-2 px-3 text-right font-bold text-navy">${fmt(tot)}</td>
+      <td class="py-2 px-3 text-right text-gray-500">${secPct}%</td>
+      <td class="py-2 px-3 text-right text-gray-500">${invPct}%</td>
+    </tr>`;
+  });
+  body.innerHTML = rows.join('');
+})();
+
+// --- Full history table ---
+(function() {
+  const body = document.getElementById('table-body');
+  const rows2025 = DATA.months_2025.map((m, i) => {
+    const sec = DATA.security_2025[i], inv = DATA.invision_2025[i], tot = DATA.total_2025[i];
+    return `<tr class="border-b border-gray-100 hover:bg-gray-50">
+      <td class="py-2 px-3 text-gray-700">${m} 2025</td>
+      <td class="py-2 px-3 text-right text-electric">${fmt(sec)}</td>
+      <td class="py-2 px-3 text-right" style="color:var(--purple)">${fmt(inv)}</td>
+      <td class="py-2 px-3 text-right font-semibold text-navy">${fmt(tot)}</td>
+      <td class="py-2 px-3 text-right text-gray-400 text-xs">—</td>
+    </tr>`;
+  });
+  const rows2026 = DATA.months_2026.map((m, i) => {
+    const sec = DATA.security_2026[i], inv = DATA.invision_2026[i], tot = DATA.total_2026[i];
+    const prev = DATA.total_2025[i];
+    const growth = prev ? (((tot - prev) / prev) * 100).toFixed(2) + '%' : '—';
+    const growthClass = tot >= prev ? 'text-green-600' : 'text-red-500';
+    return `<tr class="border-b border-gray-100 hover:bg-blue-50 font-medium">
+      <td class="py-2 px-3 text-gray-800">${m} 2026</td>
+      <td class="py-2 px-3 text-right text-electric">${fmt(sec)}</td>
+      <td class="py-2 px-3 text-right" style="color:var(--purple)">${fmt(inv)}</td>
+      <td class="py-2 px-3 text-right font-bold text-navy">${fmt(tot)}</td>
+      <td class="py-2 px-3 text-right ${growthClass} text-sm">↑ ${growth}</td>
+    </tr>`;
+  });
+  // 2026 rows first, then 2025 history
+  body.innerHTML = rows2026.join('') + `<tr><td colspan="5" class="py-2 px-3 text-xs text-gray-400 font-semibold uppercase tracking-wider bg-gray-50">2025 History</td></tr>` + rows2025.join('');
+})();
+
+// --- Tabs ---
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    document.querySelectorAll('.tab-content').forEach(tc => tc.classList.add('hidden'));
+    const target = document.getElementById('tab-' + btn.dataset.tab);
+    if (target) target.classList.remove('hidden');
+  });
+});
+</script>
+
+</body>
+</html>
