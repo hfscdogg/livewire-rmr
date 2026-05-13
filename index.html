@@ -3,14 +3,16 @@
   ==========================================================================
   Data Source: Google Sheets ID 1Zm-0hEHdtpxbmnXpgLSCcsJcsdyOwXQ_agKBAWinglw
 
-  SETUP (to enable live data from Google Sheets):
-  1. Open the spreadsheet in Google Sheets
-  2. File > Share > Publish to web > Entire Document > CSV > Publish
-  3. Copy the published URL and replace PUBLISHED_CSV_BASE below
-  4. Update SHEET_GIDS with the actual gid values for each year tab
+  LIVE DATA:
+    The dashboard pulls CSV from each year-tab via the gviz endpoint.
+    The sheet must be shared "Anyone with the link can view" (or wider).
+    Config lives at the top of the <script> block: SHEET_ID, SHEET_TABS,
+    COLUMN_ALIASES, REFRESH_INTERVAL_MS.
 
-  Current data is hardcoded as a snapshot (Apr 2026).
-  Auto-refresh is enabled if live CSV URLs are configured.
+  FALLBACK:
+    If the fetch fails (sheet private, network, parse error), the dashboard
+    renders the hardcoded snapshot (FALLBACK_DATA, captured Apr 21 2026) and
+    the header shows a "Snapshot" badge with the error reason in the tooltip.
 ========================================================================== -->
 <!DOCTYPE html>
 <html lang="en">
@@ -140,6 +142,46 @@
     table { border-collapse: collapse; width: 100%; }
     th, td { text-align: left; }
     tr:last-child td { border-bottom: none; }
+
+    /* Live status pill */
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      font-size: 0.7rem;
+      font-weight: 600;
+      padding: 0.15rem 0.55rem;
+      border-radius: 999px;
+      line-height: 1.2;
+    }
+    .status-dot {
+      width: 7px; height: 7px; border-radius: 999px;
+      display: inline-block;
+    }
+    .status-live    { background: #D1FAE5; color: #065F46; }
+    .status-live .status-dot    { background: #10B981; box-shadow: 0 0 0 2px rgba(16,185,129,0.18); }
+    .status-loading { background: #FEF3C7; color: #92400E; }
+    .status-loading .status-dot { background: #F59E0B; animation: pulse 1.1s infinite; }
+    .status-snapshot{ background: #F3F4F6; color: #6B7280; }
+    .status-snapshot .status-dot{ background: #9CA3AF; }
+    .status-error   { background: #FEE2E2; color: #991B1B; }
+    .status-error .status-dot   { background: #EF4444; }
+    @keyframes pulse { 0%, 100% { opacity: 1 } 50% { opacity: 0.35 } }
+
+    .refresh-btn {
+      font-size: 0.7rem;
+      font-weight: 600;
+      padding: 0.2rem 0.55rem;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: white;
+      color: var(--navy);
+      cursor: pointer;
+      transition: all 0.15s;
+      line-height: 1.2;
+    }
+    .refresh-btn:hover { background: #F9FAFB; border-color: #D1D5DB; }
+    .refresh-btn:disabled { opacity: 0.5; cursor: wait; }
   </style>
 </head>
 <body>
@@ -152,8 +194,13 @@
       <p class="text-sm text-gray-500 font-display">Recurring Monthly Revenue</p>
     </div>
     <div class="text-right text-sm text-gray-500">
-      <div id="hdr-period">April 2026 · Data through March 2026</div>
-      <div id="hdr-refresh" class="text-xs text-gray-400 mt-0.5">Snapshot: Apr 21, 2026</div>
+      <div id="hdr-period">—</div>
+      <div class="flex items-center gap-2 justify-end mt-1">
+        <span id="hdr-status" class="status-pill status-loading" title="Loading data from Google Sheets">
+          <span class="status-dot"></span><span id="hdr-status-text">Loading…</span>
+        </span>
+        <button id="hdr-refresh-btn" class="refresh-btn" type="button" title="Refresh now">↻ Refresh</button>
+      </div>
     </div>
   </div>
 </div>
@@ -163,7 +210,7 @@
   <!-- ===== KPI SECTION HEADER ===== -->
   <div class="flex items-baseline justify-between mb-3 pb-2 border-b border-gray-200">
     <div class="flex items-baseline gap-3">
-      <h2 class="text-lg font-bold font-display text-navy tracking-tight uppercase">Current Month · March 2026</h2>
+      <h2 id="kpi-section-title" class="text-lg font-bold font-display text-navy tracking-tight uppercase">Current Month</h2>
       <span class="text-xs text-gray-500">Snapshot of the most recent reporting month</span>
     </div>
     <span class="hidden sm:inline text-xs text-gray-400">Latest complete month</span>
@@ -175,67 +222,63 @@
     <!-- Current Month RMR -->
     <div class="kpi-card">
       <div class="flex items-center justify-between mb-1">
-        <span class="text-sm font-medium text-gray-500">💰 Mar 2026 RMR</span>
-        <span id="badge-mom" class="badge badge-up">↑ +5.0%</span>
+        <span id="kpi-cur-title" class="text-sm font-medium text-gray-500">💰 Current month</span>
+        <span id="kpi-cur-badge" class="badge badge-flat">—</span>
       </div>
-      <div class="text-2xl font-bold font-display text-navy">$48,796</div>
-      <div class="text-xs text-gray-400 mt-1">vs Feb 2026: $44,026</div>
+      <div id="kpi-cur-value" class="text-2xl font-bold font-display text-navy">—</div>
+      <div id="kpi-cur-prev" class="text-xs text-gray-400 mt-1">—</div>
       <div class="mt-3 flex gap-2 text-xs">
-        <span class="text-electric font-medium">Security $31,963</span>
+        <span id="kpi-cur-sec" class="text-electric font-medium">—</span>
         <span class="text-gray-300">·</span>
-        <span class="text-purple font-medium">Invision $16,833</span>
+        <span id="kpi-cur-inv" class="text-purple font-medium">—</span>
       </div>
     </div>
 
-    <!-- 2026 YTD -->
+    <!-- YTD -->
     <div class="kpi-card">
       <div class="flex items-center justify-between mb-1">
-        <span class="text-sm font-medium text-gray-500">📊 2026 YTD</span>
-        <span class="badge badge-up">↑ +3.4%</span>
+        <span id="kpi-ytd-title" class="text-sm font-medium text-gray-500">📊 YTD</span>
+        <span id="kpi-ytd-badge" class="badge badge-flat">—</span>
       </div>
-      <div class="text-2xl font-bold font-display text-navy">$136,023</div>
+      <div id="kpi-ytd-value" class="text-2xl font-bold font-display text-navy">—</div>
       <div class="progress-bar-bg my-2">
         <div class="progress-bar-fill bg-electric" id="prog-ytd"></div>
       </div>
       <div class="flex justify-between text-xs text-gray-400">
-        <span>vs 2025 YTD: $131,512</span>
-        <span id="prog-ytd-pct">27%</span>
+        <span id="kpi-ytd-prev">—</span>
+        <span id="prog-ytd-pct">—</span>
       </div>
-      <div class="text-xs text-gray-400 mt-1">of 2025 full-year pace</div>
+      <div class="text-xs text-gray-400 mt-1" id="kpi-ytd-caption">—</div>
     </div>
 
     <!-- YOY Growth -->
     <div class="kpi-card">
       <div class="flex items-center justify-between mb-1">
-        <span class="text-sm font-medium text-gray-500">📈 Q1 YOY Growth</span>
-        <span class="badge badge-up">↑ Growing</span>
+        <span id="kpi-yoy-title" class="text-sm font-medium text-gray-500">📈 YOY Growth</span>
+        <span id="kpi-yoy-badge" class="badge badge-flat">—</span>
       </div>
-      <div class="text-2xl font-bold font-display text-green-600">+3.32%</div>
-      <div class="text-xs text-gray-400 mt-1 mb-2">Jan–Mar 2026 vs Jan–Mar 2025</div>
-      <div class="space-y-1 text-xs">
-        <div class="flex justify-between"><span class="text-gray-500">Jan</span><span class="text-green-600 font-medium">+1.74%</span></div>
-        <div class="flex justify-between"><span class="text-gray-500">Feb</span><span class="text-green-600 font-medium">+2.74%</span></div>
-        <div class="flex justify-between"><span class="text-gray-500">Mar</span><span class="text-green-600 font-medium">+3.32%</span></div>
-      </div>
+      <div id="kpi-yoy-value" class="text-2xl font-bold font-display text-green-600">—</div>
+      <div id="kpi-yoy-period" class="text-xs text-gray-400 mt-1 mb-2">—</div>
+      <div id="kpi-yoy-months" class="space-y-1 text-xs"></div>
     </div>
 
-    <!-- 2025 Annual -->
+    <!-- Annual (prior year) -->
     <div class="kpi-card">
       <div class="flex items-center justify-between mb-1">
-        <span class="text-sm font-medium text-gray-500">🗓 2025 Annual RMR</span>
+        <span id="kpi-annual-title" class="text-sm font-medium text-gray-500">🗓 Prior Year Annual RMR</span>
         <span class="badge badge-flat">Full Year</span>
       </div>
-      <div class="text-2xl font-bold font-display text-navy">$503,218</div>
-      <div class="text-xs text-gray-400 mt-1 mb-3">Avg $41,935/mo</div>
+      <div id="kpi-annual-value" class="text-2xl font-bold font-display text-navy">—</div>
+      <div id="kpi-annual-avg" class="text-xs text-gray-400 mt-1 mb-3">—</div>
       <div>
         <div class="flex justify-between text-xs text-gray-500 mb-1">
-          <span>Security</span><span class="font-medium text-navy">$345,423 · 68.6%</span>
+          <span>Security</span><span id="kpi-annual-sec" class="font-medium text-navy">—</span>
         </div>
-        <div class="div-bar-bg mb-2"><div class="div-bar-fill div-bar-security" style="width:68.6%"></div></div>
+        <div class="div-bar-bg mb-2"><div id="kpi-annual-sec-bar" class="div-bar-fill div-bar-security" style="width:0%"></div></div>
         <div class="flex justify-between text-xs text-gray-500 mb-1">
-          <span>Invision</span><span class="font-medium text-navy">$157,796 · 31.4%</span>
+          <span>Invision</span><span id="kpi-annual-inv" class="font-medium text-navy">—</span>
         </div>
-        <div class="div-bar-bg"><div class="div-bar-fill div-bar-invision" style="width:31.4%"></div></div>
+        <div class="div-bar-bg"><div id="kpi-annual-inv-bar" class="div-bar-fill div-bar-invision" style="width:0%"></div></div>
       </div>
     </div>
 
@@ -245,21 +288,21 @@
   <div class="chart-card mb-6">
     <div class="flex flex-col md:flex-row items-start md:items-center gap-6">
       <div class="md:min-w-[220px]">
-        <div class="text-sm font-medium text-gray-500 mb-1">🔧 Mar 2026 Service Mix</div>
+        <div id="mix-title" class="text-sm font-medium text-gray-500 mb-1">🔧 Service Mix</div>
         <div class="flex gap-6 mt-2">
           <div>
             <div class="text-xs text-gray-400 mb-0.5">Security</div>
-            <div class="text-2xl font-bold font-display text-electric">65.5%</div>
-            <div class="text-sm text-gray-500">$31,963</div>
+            <div id="mix-sec-pct" class="text-2xl font-bold font-display text-electric">—</div>
+            <div id="mix-sec-amt" class="text-sm text-gray-500">—</div>
           </div>
           <div class="w-px bg-gray-200 self-stretch"></div>
           <div>
             <div class="text-xs text-gray-400 mb-0.5">Invision</div>
-            <div class="text-2xl font-bold font-display" style="color:var(--purple)">34.5%</div>
-            <div class="text-sm text-gray-500">$16,833</div>
+            <div id="mix-inv-pct" class="text-2xl font-bold font-display" style="color:var(--purple)">—</div>
+            <div id="mix-inv-amt" class="text-sm text-gray-500">—</div>
           </div>
         </div>
-        <div class="mt-3 text-xs text-gray-400">Invision growing fastest (+21.4% vs Feb)</div>
+        <div id="mix-caption" class="mt-3 text-xs text-gray-400">—</div>
       </div>
       <div class="flex-1 w-full" style="height:100px; max-height:100px;">
         <canvas id="sparkline-total"></canvas>
@@ -294,18 +337,18 @@
       </div>
       <!-- Doughnut -->
       <div class="chart-card flex flex-col items-center justify-center">
-        <h3 class="font-semibold text-navy font-display mb-4 self-start">2025 Revenue Mix</h3>
+        <h3 id="donut-title" class="font-semibold text-navy font-display mb-4 self-start">Revenue Mix</h3>
         <div style="height:200px; width:200px;">
           <canvas id="chart-donut"></canvas>
         </div>
         <div class="mt-4 space-y-2 w-full">
           <div class="flex items-center justify-between text-sm">
             <span class="flex items-center gap-2"><span class="inline-block w-3 h-3 rounded bg-electric"></span>Security</span>
-            <span class="font-semibold">$345,423</span>
+            <span id="donut-sec" class="font-semibold">—</span>
           </div>
           <div class="flex items-center justify-between text-sm">
             <span class="flex items-center gap-2"><span class="inline-block w-3 h-3 rounded" style="background:var(--purple)"></span>Invision</span>
-            <span class="font-semibold">$157,796</span>
+            <span id="donut-inv" class="font-semibold">—</span>
           </div>
         </div>
       </div>
@@ -316,32 +359,13 @@
   <div id="tab-yoy" class="tab-content hidden">
     <div class="chart-card">
       <div class="flex items-center justify-between mb-4">
-        <h3 class="font-semibold text-navy font-display">2025 vs 2026 — Monthly RMR</h3>
-        <div class="flex gap-3 text-xs text-gray-500">
-          <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-full bg-gray-400"></span>2025</span>
-          <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-full bg-electric"></span>2026</span>
-        </div>
+        <h3 id="yoy-chart-title" class="font-semibold text-navy font-display">YOY — Monthly RMR</h3>
+        <div id="yoy-legend" class="flex gap-3 text-xs text-gray-500"></div>
       </div>
       <div style="height:300px;">
         <canvas id="chart-yoy"></canvas>
       </div>
-      <div class="mt-4 grid grid-cols-3 gap-4 pt-4 border-t border-gray-100">
-        <div class="text-center">
-          <div class="text-xs text-gray-400 mb-1">Jan Growth</div>
-          <div class="text-lg font-bold font-display text-green-600">+1.74%</div>
-          <div class="text-xs text-gray-500">$43,201 vs $42,450</div>
-        </div>
-        <div class="text-center">
-          <div class="text-xs text-gray-400 mb-1">Feb Growth</div>
-          <div class="text-lg font-bold font-display text-green-600">+2.74%</div>
-          <div class="text-xs text-gray-500">$44,026 vs $42,384</div>
-        </div>
-        <div class="text-center">
-          <div class="text-xs text-gray-400 mb-1">Mar Growth</div>
-          <div class="text-lg font-bold font-display text-green-600">+3.32%</div>
-          <div class="text-xs text-gray-500">$48,796 vs $46,679</div>
-        </div>
-      </div>
+      <div id="yoy-month-grid" class="mt-4 grid grid-cols-3 gap-4 pt-4 border-t border-gray-100"></div>
     </div>
   </div>
 
@@ -367,9 +391,9 @@
         </div>
       </div>
     </div>
-    <!-- 2026 Breakdown stats -->
+    <!-- Current-year breakdown stats -->
     <div class="chart-card mt-5">
-      <h3 class="font-semibold text-navy font-display mb-4">2026 Q1 — Service Detail</h3>
+      <h3 id="breakdown-title" class="font-semibold text-navy font-display mb-4">Service Detail</h3>
       <div class="overflow-x-auto">
         <table class="text-sm">
           <thead>
@@ -413,55 +437,503 @@
 
 <script>
 // ============================================================
-// DATA — hardcoded snapshot (Apr 21 2026)
-// To enable live data: publish the Google Sheet to web as CSV
-// and update the fetch URLs below.
+// CONFIG — adjust if the sheet structure changes
 // ============================================================
+const SHEET_ID = '1Zm-0hEHdtpxbmnXpgLSCcsJcsdyOwXQ_agKBAWinglw';
 
-const DATA = {
-  months_2025: ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'],
-  security_2025: [28586.46, 29219.32, 30873.99, 28424.05, 28096.46, 27525.77, 30404.68, 29001.65, 25619.67, 28576.47, 29508.69, 29585.51],
-  invision_2025: [13863.08, 13164.59, 15804.52, 14383.85, 12298.30, 10806.75, 15178.04, 13257.88, 11687.04, 12024.50, 11738.25, 13588.89],
-  total_2025:    [42449.54, 42383.91, 46678.51, 42807.90, 40394.76, 38332.52, 45582.72, 42259.53, 37306.71, 40600.97, 41246.94, 43174.40],
+// Tab names to fetch, oldest year first. Each tab is one year.
+// The sheet must be shared "Anyone with the link can view".
+const SHEET_TABS = ['2025', '2026'];
 
-  months_2026: ['Jan','Feb','Mar'],
-  security_2026: [30405.16, 30180.07, 31963.08],
-  invision_2026: [12796.01, 13845.71, 16833.33],
-  total_2026:    [43201.17, 44025.78, 48796.41],
+// Column-header matching (case-insensitive substring). The parser picks
+// the first column whose header contains one of these tokens.
+const COLUMN_ALIASES = {
+  month:    ['month', 'period', 'date'],
+  security: ['security'],
+  invision: ['invision', 'invis'],
 };
 
-// Derived
-const ytd2026 = DATA.total_2026.reduce((s, v) => s + v, 0); // 136,023.36
-const ytd2025same = DATA.total_2025.slice(0, DATA.months_2026.length).reduce((s, v) => s + v, 0);
+const REFRESH_INTERVAL_MS = 5 * 60 * 1000;   // background refresh every 5 min
+
+// ============================================================
+// FALLBACK DATA — last-known snapshot, captured Apr 21 2026.
+// Used only if the live fetch fails (e.g. sheet not shared, network).
+// ============================================================
+const SNAPSHOT_DATE = 'Apr 21, 2026';
+const FALLBACK_DATA = {
+  years: ['2025', '2026'],
+  '2025': {
+    months:   ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'],
+    security: [28586.46, 29219.32, 30873.99, 28424.05, 28096.46, 27525.77, 30404.68, 29001.65, 25619.67, 28576.47, 29508.69, 29585.51],
+    invision: [13863.08, 13164.59, 15804.52, 14383.85, 12298.30, 10806.75, 15178.04, 13257.88, 11687.04, 12024.50, 11738.25, 13588.89],
+  },
+  '2026': {
+    months:   ['Jan','Feb','Mar'],
+    security: [30405.16, 30180.07, 31963.08],
+    invision: [12796.01, 13845.71, 16833.33],
+  },
+};
+
+const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const MONTH_INDEX = {};
+['january','february','march','april','may','june','july','august','september','october','november','december']
+  .forEach((m, i) => { MONTH_INDEX[m] = i; MONTH_INDEX[m.slice(0,3)] = i; });
+MONTH_INDEX['sept'] = 8;
+
+// ============================================================
+// STATE
+// ============================================================
+const STATE = {
+  data:        null,         // normalized data, see normalize()
+  source:      'snapshot',   // 'live' | 'snapshot' | 'loading'
+  lastUpdated: null,         // Date when live fetch succeeded
+  errorMsg:    null,
+  charts:      {},
+};
+
+Chart.defaults.font.family = "'DM Sans', sans-serif";
+Chart.defaults.color = '#6B7280';
+
+// ============================================================
+// FORMATTING
+// ============================================================
+function fmt(n)         { return '$' + Math.round(n).toLocaleString('en-US'); }
+function fmtPct(n)      { return (n > 0 ? '+' : '') + n.toFixed(2) + '%'; }
+function fmtPct1(n)     { return (n > 0 ? '+' : '') + n.toFixed(1) + '%'; }
+function fmtMonthYear(monthIdx, year) { return MONTH_NAMES[monthIdx] + ' ' + year; }
+function fmtRelTime(ts) {
+  const s = Math.max(0, Math.floor((Date.now() - ts) / 1000));
+  if (s < 60)    return 'just now';
+  if (s < 3600)  return Math.floor(s / 60) + ' min ago';
+  if (s < 86400) return Math.floor(s / 3600) + ' hr ago';
+  return Math.floor(s / 86400) + ' day ago';
+}
+
+function set(id, text) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = text;
+}
+
+// ============================================================
+// CSV FETCH + PARSE
+// ============================================================
+function csvUrl(tab) {
+  // gviz endpoint works for any sheet shared "anyone with the link can view".
+  // Cache-buster prevents stale browser/CDN caches on refresh.
+  return 'https://docs.google.com/spreadsheets/d/' + SHEET_ID +
+    '/gviz/tq?tqx=out:csv&sheet=' + encodeURIComponent(tab) +
+    '&_=' + Date.now();
+}
+
+// Minimal RFC4180-ish CSV parser (handles quoted fields, commas, "" escapes).
+function parseCsv(text) {
+  const rows = [];
+  let row = [], field = '', inQuotes = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inQuotes) {
+      if (c === '"') {
+        if (text[i + 1] === '"') { field += '"'; i++; }
+        else inQuotes = false;
+      } else {
+        field += c;
+      }
+    } else {
+      if (c === '"')      inQuotes = true;
+      else if (c === ',') { row.push(field); field = ''; }
+      else if (c === '\n'){ row.push(field); rows.push(row); row = []; field = ''; }
+      else if (c !== '\r') field += c;
+    }
+  }
+  if (field.length || row.length) { row.push(field); rows.push(row); }
+  return rows;
+}
+
+function parseNumber(v) {
+  if (v == null) return null;
+  let s = String(v).trim();
+  if (!s || s === '-' || s === '—') return null;
+  // Strip $, commas, whitespace; convert (123) to -123 (accounting negative).
+  s = s.replace(/[$,\s]/g, '').replace(/^\((.*)\)$/, '-$1');
+  const n = Number(s);
+  return Number.isFinite(n) ? n : null;
+}
+
+function findCol(headerLower, aliases) {
+  for (const alias of aliases) {
+    const idx = headerLower.findIndex(h => h.includes(alias));
+    if (idx !== -1) return idx;
+  }
+  return -1;
+}
+
+// Parse one tab's rows into { months, security, invision } arrays.
+// Months returned in chronological order (Jan..Dec). Skips blank/total rows.
+function parseTabRows(rows, tabName) {
+  // Find a header row containing both Security and Invision columns.
+  let headerIdx = -1, cols = null;
+  for (let i = 0; i < rows.length && i < 10; i++) {
+    const headerLower = rows[i].map(c => (c || '').toString().trim().toLowerCase());
+    const sec = findCol(headerLower, COLUMN_ALIASES.security);
+    const inv = findCol(headerLower, COLUMN_ALIASES.invision);
+    if (sec !== -1 && inv !== -1) {
+      headerIdx = i;
+      cols = {
+        security: sec,
+        invision: inv,
+        month: findCol(headerLower, COLUMN_ALIASES.month),
+      };
+      if (cols.month === -1) cols.month = 0;
+      break;
+    }
+  }
+  if (!cols) throw new Error('Tab "' + tabName + '": could not find Security/Invision columns');
+
+  // Bucket by month index so we tolerate out-of-order rows / missing months.
+  const byMonth = new Array(12).fill(null);
+  for (let i = headerIdx + 1; i < rows.length; i++) {
+    const r = rows[i];
+    const monthCell = (r[cols.month] || '').toString().trim();
+    if (!monthCell) continue;
+    const mIdx = monthKey(monthCell);
+    if (mIdx == null) continue;
+    const sec = parseNumber(r[cols.security]);
+    const inv = parseNumber(r[cols.invision]);
+    if (sec == null && inv == null) continue;
+    byMonth[mIdx] = { sec: sec ?? 0, inv: inv ?? 0 };
+  }
+
+  // Truncate to the last month that has data (don't pad trailing nulls).
+  let lastFilled = -1;
+  for (let i = 0; i < 12; i++) if (byMonth[i]) lastFilled = i;
+  if (lastFilled === -1) throw new Error('Tab "' + tabName + '": no data rows found');
+
+  const months = [], security = [], invision = [];
+  for (let i = 0; i <= lastFilled; i++) {
+    months.push(MONTH_NAMES[i]);
+    security.push(byMonth[i]?.sec ?? 0);
+    invision.push(byMonth[i]?.inv ?? 0);
+  }
+  return { months, security, invision };
+}
+
+// Map "Jan", "January", "01/2026", "2026-03-15", etc. to a 0-11 index.
+function monthKey(cell) {
+  const lower = cell.toLowerCase().trim();
+  // Try month name / abbreviation first.
+  const word = lower.match(/[a-z]+/);
+  if (word && MONTH_INDEX[word[0]] != null) return MONTH_INDEX[word[0]];
+  // Try ISO date 2026-03-15 or 2026/03
+  const iso = lower.match(/^(\d{4})[-/](\d{1,2})/);
+  if (iso) { const m = parseInt(iso[2], 10); if (m >= 1 && m <= 12) return m - 1; }
+  // Try 03/2026 or 03-15-2026
+  const us = lower.match(/^(\d{1,2})[-/]/);
+  if (us) { const m = parseInt(us[1], 10); if (m >= 1 && m <= 12) return m - 1; }
+  return null;
+}
+
+async function fetchLive() {
+  const out = { years: SHEET_TABS.slice() };
+  for (const tab of SHEET_TABS) {
+    const res = await fetch(csvUrl(tab), { cache: 'no-store' });
+    if (!res.ok) {
+      const hint = res.status === 401 || res.status === 403
+        ? ' — make sure the sheet is shared "Anyone with the link can view".'
+        : '';
+      throw new Error('Sheet "' + tab + '" returned ' + res.status + hint);
+    }
+    const text = await res.text();
+    // gviz returns an HTML login page (200 OK) when the sheet isn't public.
+    if (text.trim().startsWith('<')) {
+      throw new Error('Sheet "' + tab + '" is not publicly viewable (got HTML, expected CSV).');
+    }
+    out[tab] = parseTabRows(parseCsv(text), tab);
+  }
+  return out;
+}
+
+// ============================================================
+// NORMALIZATION — add totals + derived helpers
+// ============================================================
+function normalize(raw) {
+  const data = { years: raw.years.slice() };
+  for (const y of data.years) {
+    const yr = raw[y];
+    data[y] = {
+      months:   yr.months.slice(),
+      security: yr.security.slice(),
+      invision: yr.invision.slice(),
+      total:    yr.security.map((s, i) => s + yr.invision[i]),
+    };
+  }
+  return data;
+}
+
+// ============================================================
+// STATUS / HEADER
+// ============================================================
+function setStatus(kind, opts = {}) {
+  const pill = document.getElementById('hdr-status');
+  const txt  = document.getElementById('hdr-status-text');
+  if (!pill || !txt) return;
+  pill.classList.remove('status-live', 'status-loading', 'status-snapshot', 'status-error');
+  if (kind === 'loading') {
+    pill.classList.add('status-loading');
+    txt.textContent = 'Loading…';
+    pill.title = 'Fetching latest data from Google Sheets';
+  } else if (kind === 'live') {
+    pill.classList.add('status-live');
+    txt.textContent = 'Live · updated ' + fmtRelTime(opts.at);
+    pill.title = 'Last successful fetch: ' + opts.at.toLocaleString();
+  } else if (kind === 'snapshot') {
+    pill.classList.add('status-snapshot');
+    txt.textContent = 'Snapshot · ' + SNAPSHOT_DATE;
+    pill.title = opts.reason
+      ? ('Showing fallback data. Reason: ' + opts.reason)
+      : 'Showing hardcoded snapshot.';
+  } else if (kind === 'error') {
+    pill.classList.add('status-error');
+    txt.textContent = 'Refresh failed';
+    pill.title = opts.reason || 'Unknown error';
+  }
+}
+
+function renderHeader(data) {
+  const currentYear = data.years[data.years.length - 1];
+  const cy = data[currentYear];
+  const monthIdx = MONTH_NAMES.indexOf(cy.months[cy.months.length - 1]);
+  const nextMonthIdx = (monthIdx + 1) % 12;
+  const nextYear = nextMonthIdx === 0 ? (parseInt(currentYear, 10) + 1) : currentYear;
+  set('hdr-period',
+    fmtMonthYear(nextMonthIdx, nextYear) + ' · Data through ' + fmtMonthYear(monthIdx, currentYear));
+  set('kpi-section-title', 'Current Month · ' + fmtMonthYear(monthIdx, currentYear));
+}
+
+// ============================================================
+// KPI CARDS
+// ============================================================
+function badgeFor(deltaPct) {
+  if (deltaPct > 0.1)  return { cls: 'badge-up',   text: '↑ ' + fmtPct1(deltaPct) };
+  if (deltaPct < -0.1) return { cls: 'badge-down', text: '↓ ' + fmtPct1(deltaPct) };
+  return { cls: 'badge-flat', text: '→ Flat' };
+}
+
+function setBadge(id, info) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.className = 'badge ' + info.cls;
+  el.textContent = info.text;
+}
+
+function renderCurrentMonth(data) {
+  const cy = data[data.years[data.years.length - 1]];
+  const i = cy.months.length - 1;
+  const tot = cy.total[i];
+  const monthIdx = MONTH_NAMES.indexOf(cy.months[i]);
+  const year = data.years[data.years.length - 1];
+  set('kpi-cur-title', '💰 ' + fmtMonthYear(monthIdx, year) + ' RMR');
+  set('kpi-cur-value', fmt(tot));
+
+  if (i > 0) {
+    const prev = cy.total[i - 1];
+    const delta = ((tot - prev) / prev) * 100;
+    setBadge('kpi-cur-badge', badgeFor(delta));
+    set('kpi-cur-prev', 'vs ' + fmtMonthYear((monthIdx + 11) % 12, year) + ': ' + fmt(prev));
+  } else {
+    setBadge('kpi-cur-badge', { cls: 'badge-flat', text: 'First month' });
+    set('kpi-cur-prev', 'No prior month in this year');
+  }
+  set('kpi-cur-sec', 'Security ' + fmt(cy.security[i]));
+  set('kpi-cur-inv', 'Invision ' + fmt(cy.invision[i]));
+}
+
+function renderYtd(data) {
+  const currentYear = data.years[data.years.length - 1];
+  const cy = data[currentYear];
+  const months = cy.months.length;
+  const ytdCur = cy.total.reduce((s, v) => s + v, 0);
+  set('kpi-ytd-title', '📊 ' + currentYear + ' YTD');
+  set('kpi-ytd-value', fmt(ytdCur));
+
+  const priorYear = data.years[data.years.length - 2];
+  if (priorYear) {
+    const py = data[priorYear];
+    const ytdPrior = py.total.slice(0, months).reduce((s, v) => s + v, 0);
+    const delta = ytdPrior > 0 ? ((ytdCur - ytdPrior) / ytdPrior) * 100 : 0;
+    setBadge('kpi-ytd-badge', badgeFor(delta));
+    set('kpi-ytd-prev', 'vs ' + priorYear + ' YTD: ' + fmt(ytdPrior));
+
+    const annualPrior = py.total.reduce((s, v) => s + v, 0);
+    const pct = annualPrior > 0 ? Math.round((ytdCur / annualPrior) * 100) : 0;
+    setTimeout(() => {
+      const bar = document.getElementById('prog-ytd');
+      if (bar) bar.style.width = pct + '%';
+    }, 50);
+    set('prog-ytd-pct', pct + '%');
+    set('kpi-ytd-caption', 'of ' + priorYear + ' full-year pace');
+  } else {
+    setBadge('kpi-ytd-badge', { cls: 'badge-flat', text: 'No prior year' });
+    set('kpi-ytd-prev', '—');
+    set('prog-ytd-pct', '—');
+    set('kpi-ytd-caption', '');
+  }
+}
+
+function ytdLabel(n) {
+  if (n === 1)  return 'Jan';
+  if (n === 3)  return 'Q1';
+  if (n === 6)  return 'H1';
+  if (n === 9)  return '9-Month';
+  if (n === 12) return 'Full-Year';
+  return n + '-Month';
+}
+
+function renderYoyKpi(data) {
+  const currentYear = data.years[data.years.length - 1];
+  const priorYear   = data.years[data.years.length - 2];
+  const cy = data[currentYear];
+  const monthList = document.getElementById('kpi-yoy-months');
+  if (!monthList) return;
+
+  if (!priorYear) {
+    set('kpi-yoy-title', '📈 YOY Growth');
+    set('kpi-yoy-value', '—');
+    set('kpi-yoy-period', 'No prior year on record');
+    setBadge('kpi-yoy-badge', { cls: 'badge-flat', text: '—' });
+    monthList.innerHTML = '';
+    return;
+  }
+
+  const py = data[priorYear];
+  const months = cy.months.length;
+  set('kpi-yoy-title', '📈 ' + ytdLabel(months) + ' YOY Growth');
+
+  // Cumulative YOY for the YTD window.
+  const ytdCur   = cy.total.reduce((s, v) => s + v, 0);
+  const ytdPrior = py.total.slice(0, months).reduce((s, v) => s + v, 0);
+  const yoyPct   = ytdPrior > 0 ? ((ytdCur - ytdPrior) / ytdPrior) * 100 : 0;
+  const valEl = document.getElementById('kpi-yoy-value');
+  if (valEl) {
+    valEl.textContent = fmtPct(yoyPct);
+    valEl.className = 'text-2xl font-bold font-display ' + (yoyPct >= 0 ? 'text-green-600' : 'text-red-500');
+  }
+  set('kpi-yoy-period', cy.months[0] + '–' + cy.months[months - 1] + ' ' + currentYear +
+    ' vs ' + cy.months[0] + '–' + cy.months[months - 1] + ' ' + priorYear);
+  setBadge('kpi-yoy-badge', yoyPct >= 0 ? { cls: 'badge-up', text: '↑ Growing' } : { cls: 'badge-down', text: '↓ Declining' });
+
+  // Per-month cumulative YOY
+  monthList.innerHTML = cy.months.map((m, i) => {
+    const c = cy.total.slice(0, i + 1).reduce((s, v) => s + v, 0);
+    const p = py.total.slice(0, i + 1).reduce((s, v) => s + v, 0);
+    const d = p > 0 ? ((c - p) / p) * 100 : 0;
+    const cls = d >= 0 ? 'text-green-600' : 'text-red-500';
+    return '<div class="flex justify-between">' +
+      '<span class="text-gray-500">' + m + '</span>' +
+      '<span class="' + cls + ' font-medium">' + fmtPct(d) + '</span>' +
+    '</div>';
+  }).join('');
+}
+
+function renderAnnual(data) {
+  const priorYear = data.years[data.years.length - 2];
+  if (!priorYear) {
+    set('kpi-annual-title', '🗓 Annual RMR');
+    set('kpi-annual-value', '—');
+    set('kpi-annual-avg', 'No completed year on record');
+    set('kpi-annual-sec', '—');
+    set('kpi-annual-inv', '—');
+    return;
+  }
+  const py = data[priorYear];
+  const total = py.total.reduce((s, v) => s + v, 0);
+  const sec   = py.security.reduce((s, v) => s + v, 0);
+  const inv   = py.invision.reduce((s, v) => s + v, 0);
+  const months = py.months.length;
+  set('kpi-annual-title', '🗓 ' + priorYear + ' Annual RMR');
+  set('kpi-annual-value', fmt(total));
+  set('kpi-annual-avg', 'Avg ' + fmt(total / months) + '/mo');
+  const secPct = (sec / total) * 100;
+  const invPct = (inv / total) * 100;
+  set('kpi-annual-sec', fmt(sec) + ' · ' + secPct.toFixed(1) + '%');
+  set('kpi-annual-inv', fmt(inv) + ' · ' + invPct.toFixed(1) + '%');
+  setTimeout(() => {
+    const sb = document.getElementById('kpi-annual-sec-bar');
+    const ib = document.getElementById('kpi-annual-inv-bar');
+    if (sb) sb.style.width = secPct.toFixed(1) + '%';
+    if (ib) ib.style.width = invPct.toFixed(1) + '%';
+  }, 50);
+}
+
+function renderServiceMix(data) {
+  const currentYear = data.years[data.years.length - 1];
+  const cy = data[currentYear];
+  const i = cy.months.length - 1;
+  const monthIdx = MONTH_NAMES.indexOf(cy.months[i]);
+  const sec = cy.security[i], inv = cy.invision[i], tot = cy.total[i];
+  set('mix-title', '🔧 ' + fmtMonthYear(monthIdx, currentYear) + ' Service Mix');
+  set('mix-sec-pct', ((sec / tot) * 100).toFixed(1) + '%');
+  set('mix-sec-amt', fmt(sec));
+  set('mix-inv-pct', ((inv / tot) * 100).toFixed(1) + '%');
+  set('mix-inv-amt', fmt(inv));
+
+  // Caption: name the faster-growing service vs prior month
+  if (i > 0) {
+    const dSec = ((sec - cy.security[i - 1]) / cy.security[i - 1]) * 100;
+    const dInv = ((inv - cy.invision[i - 1]) / cy.invision[i - 1]) * 100;
+    const winner = dInv > dSec ? 'Invision' : 'Security';
+    const winnerDelta = dInv > dSec ? dInv : dSec;
+    set('mix-caption', winner + ' growing fastest (' + fmtPct1(winnerDelta) + ' vs ' + MONTH_NAMES[monthIdx === 0 ? 11 : monthIdx - 1] + ')');
+  } else {
+    set('mix-caption', 'First month of the year');
+  }
+}
 
 // ============================================================
 // CHARTS
 // ============================================================
-
-// Shared chart defaults
-Chart.defaults.font.family = "'DM Sans', sans-serif";
-Chart.defaults.color = '#6B7280';
-
-function fmt(n) {
-  return '$' + Math.round(n).toLocaleString('en-US');
+function destroyCharts() {
+  for (const k of Object.keys(STATE.charts)) {
+    try { STATE.charts[k].destroy(); } catch (_) {}
+    delete STATE.charts[k];
+  }
 }
 
-// --- Sparkline (header trend) ---
-(function() {
+function combinedSeries(data) {
+  const labels = [], security = [], invision = [], total = [];
+  for (const y of data.years) {
+    const yy = data[y];
+    for (let i = 0; i < yy.months.length; i++) {
+      labels.push(yy.months[i] + " '" + y.slice(-2));
+      security.push(yy.security[i]);
+      invision.push(yy.invision[i]);
+      total.push(yy.total[i]);
+    }
+  }
+  return { labels, security, invision, total };
+}
+
+// y-axis minimum: 70% of the smallest value, rounded down to nearest 1k
+function softMin(values) {
+  const vs = values.filter(v => v != null && Number.isFinite(v));
+  if (!vs.length) return 0;
+  const m = Math.min(...vs) * 0.7;
+  return Math.floor(m / 1000) * 1000;
+}
+
+function buildSparkline(data) {
   const ctx = document.getElementById('sparkline-total').getContext('2d');
-  const allLabels = [...DATA.months_2025.map(m => m + ' 2025'), ...DATA.months_2026.map(m => m + ' 2026')];
-  const allTotals = [...DATA.total_2025, ...DATA.total_2026];
-  const gradient = ctx.createLinearGradient(0, 0, 0, 100);
-  gradient.addColorStop(0, 'rgba(30,111,232,0.18)');
-  gradient.addColorStop(1, 'rgba(30,111,232,0)');
-  new Chart(ctx, {
+  const s = combinedSeries(data);
+  const grad = ctx.createLinearGradient(0, 0, 0, 100);
+  grad.addColorStop(0, 'rgba(30,111,232,0.18)');
+  grad.addColorStop(1, 'rgba(30,111,232,0)');
+  STATE.charts.sparkline = new Chart(ctx, {
     type: 'line',
     data: {
-      labels: allLabels,
+      labels: s.labels,
       datasets: [{
-        data: allTotals,
+        data: s.total,
         borderColor: '#1E6FE8',
-        backgroundColor: gradient,
+        backgroundColor: grad,
         borderWidth: 2.5,
         fill: true,
         tension: 0.35,
@@ -470,76 +942,33 @@ function fmt(n) {
     },
     options: {
       responsive: true, maintainAspectRatio: false,
-      plugins: { legend: { display: false }, tooltip: {
-        backgroundColor: '#0D1B2A', titleColor: '#F8F9FA', bodyColor: '#F8F9FA',
-        cornerRadius: 8, displayColors: false,
-        callbacks: { label: item => 'RMR: ' + fmt(item.raw) }
-      }},
-      scales: { x: { display: false }, y: { display: false, min: 30000 } }
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: '#0D1B2A', titleColor: '#F8F9FA', bodyColor: '#F8F9FA',
+          cornerRadius: 8, displayColors: false,
+          callbacks: { label: it => 'RMR: ' + fmt(it.raw) }
+        }
+      },
+      scales: { x: { display: false }, y: { display: false, min: softMin(s.total) } }
     }
   });
-})();
+}
 
-// --- YTD progress bar ---
-setTimeout(() => {
-  const target2025annual = DATA.total_2025.reduce((s, v) => s + v, 0); // $503,218
-  const pct = Math.round((ytd2026 / target2025annual) * 100);
-  document.getElementById('prog-ytd').style.width = pct + '%';
-  document.getElementById('prog-ytd-pct').textContent = pct + '%';
-}, 400);
-
-// --- Main trend chart ---
-(function() {
+function buildTrends(data) {
   const ctx = document.getElementById('chart-trends').getContext('2d');
-  const allLabels = [...DATA.months_2025.map(m => m + ' \'25'), ...DATA.months_2026.map(m => m + ' \'26')];
-  const allSec    = [...DATA.security_2025, ...DATA.security_2026];
-  const allInv    = [...DATA.invision_2025, ...DATA.invision_2026];
-  const allTot    = [...DATA.total_2025, ...DATA.total_2026];
-
-  // Gradient for total
+  const s = combinedSeries(data);
   const grad = ctx.createLinearGradient(0, 0, 0, 280);
   grad.addColorStop(0, 'rgba(245,158,11,0.15)');
   grad.addColorStop(1, 'rgba(245,158,11,0)');
-
-  new Chart(ctx, {
+  STATE.charts.trends = new Chart(ctx, {
     type: 'line',
     data: {
-      labels: allLabels,
+      labels: s.labels,
       datasets: [
-        {
-          label: 'Total',
-          data: allTot,
-          borderColor: '#F59E0B',
-          backgroundColor: grad,
-          borderWidth: 2.5,
-          fill: true,
-          tension: 0.3,
-          pointRadius: 3,
-          pointBackgroundColor: '#F59E0B',
-          order: 0,
-        },
-        {
-          label: 'Security',
-          data: allSec,
-          borderColor: '#1E6FE8',
-          backgroundColor: 'transparent',
-          borderWidth: 2,
-          tension: 0.3,
-          pointRadius: 2,
-          pointBackgroundColor: '#1E6FE8',
-          order: 1,
-        },
-        {
-          label: 'Invision',
-          data: allInv,
-          borderColor: '#8B5CF6',
-          backgroundColor: 'transparent',
-          borderWidth: 2,
-          tension: 0.3,
-          pointRadius: 2,
-          pointBackgroundColor: '#8B5CF6',
-          order: 2,
-        }
+        { label: 'Total',    data: s.total,    borderColor: '#F59E0B', backgroundColor: grad,         borderWidth: 2.5, fill: true,  tension: 0.3, pointRadius: 3, pointBackgroundColor: '#F59E0B', order: 0 },
+        { label: 'Security', data: s.security, borderColor: '#1E6FE8', backgroundColor: 'transparent', borderWidth: 2,   fill: false, tension: 0.3, pointRadius: 2, pointBackgroundColor: '#1E6FE8', order: 1 },
+        { label: 'Invision', data: s.invision, borderColor: '#8B5CF6', backgroundColor: 'transparent', borderWidth: 2,   fill: false, tension: 0.3, pointRadius: 2, pointBackgroundColor: '#8B5CF6', order: 2 },
       ]
     },
     options: {
@@ -547,116 +976,137 @@ setTimeout(() => {
       plugins: {
         legend: { display: false },
         tooltip: {
-          backgroundColor: '#0D1B2A', titleColor: '#F8F9FA', bodyColor: '#F8F9FA',
-          cornerRadius: 8,
-          callbacks: { label: item => item.dataset.label + ': ' + fmt(item.raw) }
+          backgroundColor: '#0D1B2A', titleColor: '#F8F9FA', bodyColor: '#F8F9FA', cornerRadius: 8,
+          callbacks: { label: it => it.dataset.label + ': ' + fmt(it.raw) }
         }
       },
       scales: {
         x: { grid: { color: '#F3F4F6' }, ticks: { maxRotation: 45 } },
-        y: {
-          grid: { color: '#F3F4F6' },
-          ticks: { callback: v => '$' + (v / 1000).toFixed(0) + 'k' },
-          min: 8000
-        }
+        y: { grid: { color: '#F3F4F6' }, ticks: { callback: v => '$' + (v / 1000).toFixed(0) + 'k' }, min: softMin(s.invision) }
       }
     }
   });
-})();
+}
 
-// --- Doughnut chart ---
-(function() {
+function buildDonut(data) {
+  const priorYear = data.years[data.years.length - 2] || data.years[data.years.length - 1];
+  const py = data[priorYear];
+  set('donut-title', priorYear + ' Revenue Mix');
+  const sec = py.security.reduce((s, v) => s + v, 0);
+  const inv = py.invision.reduce((s, v) => s + v, 0);
+  set('donut-sec', fmt(sec));
+  set('donut-inv', fmt(inv));
   const ctx = document.getElementById('chart-donut').getContext('2d');
-  const sec2025 = DATA.security_2025.reduce((s, v) => s + v, 0);
-  const inv2025 = DATA.invision_2025.reduce((s, v) => s + v, 0);
-  new Chart(ctx, {
+  STATE.charts.donut = new Chart(ctx, {
     type: 'doughnut',
     data: {
       labels: ['Security', 'Invision'],
-      datasets: [{
-        data: [sec2025, inv2025],
-        backgroundColor: ['#1E6FE8', '#8B5CF6'],
-        borderWidth: 0,
-        hoverOffset: 6,
-      }]
+      datasets: [{ data: [sec, inv], backgroundColor: ['#1E6FE8', '#8B5CF6'], borderWidth: 0, hoverOffset: 6 }]
     },
     options: {
-      responsive: true, maintainAspectRatio: false,
-      cutout: '68%',
+      responsive: true, maintainAspectRatio: false, cutout: '68%',
       plugins: {
         legend: { display: false },
         tooltip: {
-          backgroundColor: '#0D1B2A', titleColor: '#F8F9FA', bodyColor: '#F8F9FA',
-          cornerRadius: 8,
-          callbacks: { label: item => item.label + ': ' + fmt(item.raw) }
+          backgroundColor: '#0D1B2A', titleColor: '#F8F9FA', bodyColor: '#F8F9FA', cornerRadius: 8,
+          callbacks: { label: it => it.label + ': ' + fmt(it.raw) }
         }
       }
     }
   });
-})();
+}
 
-// --- YOY comparison chart ---
-(function() {
+function buildYoy(data) {
   const ctx = document.getElementById('chart-yoy').getContext('2d');
-  // Show all 12 months; 2026 only has 3
-  const labels = DATA.months_2025;
-  const data2026 = [...DATA.total_2026, ...Array(12 - DATA.total_2026.length).fill(null)];
-  new Chart(ctx, {
+  const currentYear = data.years[data.years.length - 1];
+  const priorYear   = data.years[data.years.length - 2];
+
+  set('yoy-chart-title', (priorYear ? priorYear + ' vs ' + currentYear : currentYear) + ' — Monthly RMR');
+  const legend = document.getElementById('yoy-legend');
+  if (legend) {
+    legend.innerHTML =
+      (priorYear ? '<span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-full bg-gray-400"></span>' + priorYear + '</span>' : '') +
+      '<span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-full bg-electric"></span>' + currentYear + '</span>';
+  }
+
+  const labels = MONTH_NAMES;
+  const cy = data[currentYear];
+  const cyData = MONTH_NAMES.map((_, i) => cy.total[i] ?? null);
+  const datasets = [];
+  if (priorYear) {
+    const py = data[priorYear];
+    const pyData = MONTH_NAMES.map((_, i) => py.total[i] ?? null);
+    datasets.push({ label: priorYear, data: pyData, backgroundColor: '#D1D5DB', borderRadius: 4, barPercentage: 0.8 });
+  }
+  datasets.push({ label: currentYear, data: cyData, backgroundColor: '#1E6FE8', borderRadius: 4, barPercentage: 0.8 });
+
+  const allVals = datasets.flatMap(d => d.data).filter(v => v != null);
+  STATE.charts.yoy = new Chart(ctx, {
     type: 'bar',
-    data: {
-      labels,
-      datasets: [
-        {
-          label: '2025',
-          data: DATA.total_2025,
-          backgroundColor: '#D1D5DB',
-          borderRadius: 4,
-          barPercentage: 0.8,
-        },
-        {
-          label: '2026',
-          data: data2026,
-          backgroundColor: '#1E6FE8',
-          borderRadius: 4,
-          barPercentage: 0.8,
-        }
-      ]
-    },
+    data: { labels, datasets },
     options: {
       responsive: true, maintainAspectRatio: false,
       plugins: {
         legend: { display: false },
         tooltip: {
-          backgroundColor: '#0D1B2A', titleColor: '#F8F9FA', bodyColor: '#F8F9FA',
-          cornerRadius: 8,
-          callbacks: { label: item => item.dataset.label + ': ' + fmt(item.raw) }
+          backgroundColor: '#0D1B2A', titleColor: '#F8F9FA', bodyColor: '#F8F9FA', cornerRadius: 8,
+          callbacks: { label: it => it.dataset.label + ': ' + fmt(it.raw) }
         }
       },
       scales: {
         x: { grid: { display: false } },
-        y: {
-          grid: { color: '#F3F4F6' },
-          ticks: { callback: v => '$' + (v / 1000).toFixed(0) + 'k' },
-          min: 30000
-        }
+        y: { grid: { color: '#F3F4F6' }, ticks: { callback: v => '$' + (v / 1000).toFixed(0) + 'k' }, min: softMin(allVals) }
       }
     }
   });
-})();
 
-// --- Security line chart ---
-(function() {
-  const ctx = document.getElementById('chart-security').getContext('2d');
-  const labels = [...DATA.months_2025.map(m => m + ' \'25'), ...DATA.months_2026.map(m => m + ' \'26')];
-  const data   = [...DATA.security_2025, ...DATA.security_2026];
+  // YOY footer grid (one box per current-year month)
+  const grid = document.getElementById('yoy-month-grid');
+  if (grid) {
+    if (!priorYear) {
+      grid.innerHTML = '<div class="col-span-3 text-center text-xs text-gray-400">YOY growth needs at least two years of data.</div>';
+    } else {
+      const py = data[priorYear];
+      const n = cy.months.length;
+      grid.className = 'mt-4 grid gap-4 pt-4 border-t border-gray-100' +
+        ' grid-cols-' + (n <= 3 ? n : (n <= 6 ? 3 : 4));
+      grid.innerHTML = cy.months.map((m, i) => {
+        const c = cy.total[i], p = py.total[i];
+        const d = (p && p > 0) ? ((c - p) / p) * 100 : null;
+        const dCls = d == null ? 'text-gray-400' : (d >= 0 ? 'text-green-600' : 'text-red-500');
+        const dTxt = d == null ? '—' : fmtPct(d);
+        return '<div class="text-center">' +
+          '<div class="text-xs text-gray-400 mb-1">' + m + ' Growth</div>' +
+          '<div class="text-lg font-bold font-display ' + dCls + '">' + dTxt + '</div>' +
+          '<div class="text-xs text-gray-500">' + fmt(c) + ' vs ' + (p ? fmt(p) : '—') + '</div>' +
+        '</div>';
+      }).join('');
+    }
+  }
+}
+
+function buildServiceLine(canvasId, key, color, rgbTriplet) {
+  const ctx = document.getElementById(canvasId).getContext('2d');
+  const labels = [], values = [];
+  for (const y of STATE.data.years) {
+    const yy = STATE.data[y];
+    for (let i = 0; i < yy.months.length; i++) {
+      labels.push(yy.months[i] + " '" + y.slice(-2));
+      values.push(yy[key][i]);
+    }
+  }
   const grad = ctx.createLinearGradient(0, 0, 0, 250);
-  grad.addColorStop(0, 'rgba(30,111,232,0.2)');
-  grad.addColorStop(1, 'rgba(30,111,232,0)');
-  new Chart(ctx, {
+  grad.addColorStop(0, 'rgba(' + rgbTriplet + ',0.2)');
+  grad.addColorStop(1, 'rgba(' + rgbTriplet + ',0)');
+  STATE.charts[canvasId] = new Chart(ctx, {
     type: 'line',
     data: {
       labels,
-      datasets: [{ label: 'Security', data, borderColor: '#1E6FE8', backgroundColor: grad, fill: true, borderWidth: 2.5, tension: 0.3, pointRadius: 3, pointBackgroundColor: '#1E6FE8' }]
+      datasets: [{
+        label: key, data: values, borderColor: color,
+        backgroundColor: grad, fill: true, borderWidth: 2.5, tension: 0.3,
+        pointRadius: 3, pointBackgroundColor: color
+      }]
     },
     options: {
       responsive: true, maintainAspectRatio: false,
@@ -664,98 +1114,149 @@ setTimeout(() => {
         legend: { display: false },
         tooltip: {
           backgroundColor: '#0D1B2A', titleColor: '#F8F9FA', bodyColor: '#F8F9FA', cornerRadius: 8,
-          callbacks: { label: item => 'Security: ' + fmt(item.raw) }
+          callbacks: { label: it => key[0].toUpperCase() + key.slice(1) + ': ' + fmt(it.raw) }
         }
       },
       scales: {
         x: { grid: { color: '#F3F4F6' }, ticks: { maxRotation: 45 } },
-        y: { grid: { color: '#F3F4F6' }, ticks: { callback: v => '$' + (v / 1000).toFixed(0) + 'k' }, min: 22000 }
+        y: { grid: { color: '#F3F4F6' }, ticks: { callback: v => '$' + (v / 1000).toFixed(0) + 'k' }, min: softMin(values) }
       }
     }
   });
-})();
+}
 
-// --- Invision line chart ---
-(function() {
-  const ctx = document.getElementById('chart-invision').getContext('2d');
-  const labels = [...DATA.months_2025.map(m => m + ' \'25'), ...DATA.months_2026.map(m => m + ' \'26')];
-  const data   = [...DATA.invision_2025, ...DATA.invision_2026];
-  const grad = ctx.createLinearGradient(0, 0, 0, 250);
-  grad.addColorStop(0, 'rgba(139,92,246,0.2)');
-  grad.addColorStop(1, 'rgba(139,92,246,0)');
-  new Chart(ctx, {
-    type: 'line',
-    data: {
-      labels,
-      datasets: [{ label: 'Invision', data, borderColor: '#8B5CF6', backgroundColor: grad, fill: true, borderWidth: 2.5, tension: 0.3, pointRadius: 3, pointBackgroundColor: '#8B5CF6' }]
-    },
-    options: {
-      responsive: true, maintainAspectRatio: false,
-      plugins: {
-        legend: { display: false },
-        tooltip: {
-          backgroundColor: '#0D1B2A', titleColor: '#F8F9FA', bodyColor: '#F8F9FA', cornerRadius: 8,
-          callbacks: { label: item => 'Invision: ' + fmt(item.raw) }
-        }
-      },
-      scales: {
-        x: { grid: { color: '#F3F4F6' }, ticks: { maxRotation: 45 } },
-        y: { grid: { color: '#F3F4F6' }, ticks: { callback: v => '$' + (v / 1000).toFixed(0) + 'k' }, min: 8000 }
-      }
-    }
-  });
-})();
-
-// --- Breakdown table (2026) ---
-(function() {
+// ============================================================
+// TABLES
+// ============================================================
+function renderBreakdownTable(data) {
   const body = document.getElementById('breakdown-body');
-  const rows = DATA.months_2026.map((m, i) => {
-    const sec = DATA.security_2026[i], inv = DATA.invision_2026[i], tot = DATA.total_2026[i];
+  if (!body) return;
+  const currentYear = data.years[data.years.length - 1];
+  const cy = data[currentYear];
+  set('breakdown-title', currentYear + ' — Service Detail');
+  body.innerHTML = cy.months.map((m, i) => {
+    const sec = cy.security[i], inv = cy.invision[i], tot = cy.total[i];
     const secPct = ((sec / tot) * 100).toFixed(1);
     const invPct = ((inv / tot) * 100).toFixed(1);
-    return `<tr class="border-b border-gray-100 hover:bg-gray-50">
-      <td class="py-2 px-3 font-medium text-gray-700">${m} 2026</td>
-      <td class="py-2 px-3 text-right text-electric font-medium">${fmt(sec)}</td>
-      <td class="py-2 px-3 text-right font-medium" style="color:var(--purple)">${fmt(inv)}</td>
-      <td class="py-2 px-3 text-right font-bold text-navy">${fmt(tot)}</td>
-      <td class="py-2 px-3 text-right text-gray-500">${secPct}%</td>
-      <td class="py-2 px-3 text-right text-gray-500">${invPct}%</td>
-    </tr>`;
-  });
-  body.innerHTML = rows.join('');
-})();
+    return '<tr class="border-b border-gray-100 hover:bg-gray-50">' +
+      '<td class="py-2 px-3 font-medium text-gray-700">' + m + ' ' + currentYear + '</td>' +
+      '<td class="py-2 px-3 text-right text-electric font-medium">' + fmt(sec) + '</td>' +
+      '<td class="py-2 px-3 text-right font-medium" style="color:var(--purple)">' + fmt(inv) + '</td>' +
+      '<td class="py-2 px-3 text-right font-bold text-navy">' + fmt(tot) + '</td>' +
+      '<td class="py-2 px-3 text-right text-gray-500">' + secPct + '%</td>' +
+      '<td class="py-2 px-3 text-right text-gray-500">' + invPct + '%</td>' +
+    '</tr>';
+  }).join('');
+}
 
-// --- Full history table ---
-(function() {
+function renderFullTable(data) {
   const body = document.getElementById('table-body');
-  const rows2025 = DATA.months_2025.map((m, i) => {
-    const sec = DATA.security_2025[i], inv = DATA.invision_2025[i], tot = DATA.total_2025[i];
-    return `<tr class="border-b border-gray-100 hover:bg-gray-50">
-      <td class="py-2 px-3 text-gray-700">${m} 2025</td>
-      <td class="py-2 px-3 text-right text-electric">${fmt(sec)}</td>
-      <td class="py-2 px-3 text-right" style="color:var(--purple)">${fmt(inv)}</td>
-      <td class="py-2 px-3 text-right font-semibold text-navy">${fmt(tot)}</td>
-      <td class="py-2 px-3 text-right text-gray-400 text-xs">—</td>
-    </tr>`;
-  });
-  const rows2026 = DATA.months_2026.map((m, i) => {
-    const sec = DATA.security_2026[i], inv = DATA.invision_2026[i], tot = DATA.total_2026[i];
-    const prev = DATA.total_2025[i];
-    const growth = prev ? (((tot - prev) / prev) * 100).toFixed(2) + '%' : '—';
-    const growthClass = tot >= prev ? 'text-green-600' : 'text-red-500';
-    return `<tr class="border-b border-gray-100 hover:bg-blue-50 font-medium">
-      <td class="py-2 px-3 text-gray-800">${m} 2026</td>
-      <td class="py-2 px-3 text-right text-electric">${fmt(sec)}</td>
-      <td class="py-2 px-3 text-right" style="color:var(--purple)">${fmt(inv)}</td>
-      <td class="py-2 px-3 text-right font-bold text-navy">${fmt(tot)}</td>
-      <td class="py-2 px-3 text-right ${growthClass} text-sm">↑ ${growth}</td>
-    </tr>`;
-  });
-  // 2026 rows first, then 2025 history
-  body.innerHTML = rows2026.join('') + `<tr><td colspan="5" class="py-2 px-3 text-xs text-gray-400 font-semibold uppercase tracking-wider bg-gray-50">2025 History</td></tr>` + rows2025.join('');
-})();
+  if (!body) return;
+  const html = [];
+  // Render newest year first, descending, with a divider header between each.
+  for (let yi = data.years.length - 1; yi >= 0; yi--) {
+    const year = data.years[yi];
+    const yr = data[year];
+    const prior = data.years[yi - 1] ? data[data.years[yi - 1]] : null;
+    const isCurrent = yi === data.years.length - 1;
+    if (!isCurrent) {
+      html.push('<tr><td colspan="5" class="py-2 px-3 text-xs text-gray-400 font-semibold uppercase tracking-wider bg-gray-50">' + year + ' History</td></tr>');
+    }
+    yr.months.forEach((m, i) => {
+      const sec = yr.security[i], inv = yr.invision[i], tot = yr.total[i];
+      let growthCell = '<td class="py-2 px-3 text-right text-gray-400 text-xs">—</td>';
+      if (prior && prior.total[i] != null) {
+        const p = prior.total[i];
+        const g = ((tot - p) / p) * 100;
+        const cls = g >= 0 ? 'text-green-600' : 'text-red-500';
+        const arr = g >= 0 ? '↑' : '↓';
+        growthCell = '<td class="py-2 px-3 text-right ' + cls + ' text-sm">' + arr + ' ' + fmtPct(g) + '</td>';
+      }
+      const rowCls = isCurrent
+        ? 'border-b border-gray-100 hover:bg-blue-50 font-medium'
+        : 'border-b border-gray-100 hover:bg-gray-50';
+      html.push(
+        '<tr class="' + rowCls + '">' +
+          '<td class="py-2 px-3 text-gray-' + (isCurrent ? '800' : '700') + '">' + m + ' ' + year + '</td>' +
+          '<td class="py-2 px-3 text-right text-electric">' + fmt(sec) + '</td>' +
+          '<td class="py-2 px-3 text-right" style="color:var(--purple)">' + fmt(inv) + '</td>' +
+          '<td class="py-2 px-3 text-right ' + (isCurrent ? 'font-bold text-navy' : 'font-semibold text-navy') + '">' + fmt(tot) + '</td>' +
+          growthCell +
+        '</tr>');
+    });
+  }
+  body.innerHTML = html.join('');
+}
 
-// --- Tabs ---
+// ============================================================
+// RENDER
+// ============================================================
+function render(data) {
+  STATE.data = data;
+  destroyCharts();
+  renderHeader(data);
+  renderCurrentMonth(data);
+  renderYtd(data);
+  renderYoyKpi(data);
+  renderAnnual(data);
+  renderServiceMix(data);
+  buildSparkline(data);
+  buildTrends(data);
+  buildDonut(data);
+  buildYoy(data);
+  buildServiceLine('chart-security', 'security', '#1E6FE8', '30,111,232');
+  buildServiceLine('chart-invision', 'invision', '#8B5CF6', '139,92,246');
+  renderBreakdownTable(data);
+  renderFullTable(data);
+}
+
+// ============================================================
+// REFRESH LOOP
+// ============================================================
+let refreshing = false;
+
+async function refresh() {
+  if (refreshing) return;
+  refreshing = true;
+  const btn = document.getElementById('hdr-refresh-btn');
+  if (btn) btn.disabled = true;
+  setStatus('loading');
+  try {
+    const raw = await fetchLive();
+    const data = normalize(raw);
+    render(data);
+    STATE.source = 'live';
+    STATE.lastUpdated = new Date();
+    STATE.errorMsg = null;
+    setStatus('live', { at: STATE.lastUpdated });
+  } catch (e) {
+    console.warn('[RMR] Live fetch failed:', e);
+    STATE.errorMsg = e && e.message ? e.message : String(e);
+    if (STATE.source !== 'live') {
+      // Never rendered live successfully — show the snapshot.
+      render(normalize(FALLBACK_DATA));
+      STATE.source = 'snapshot';
+      setStatus('snapshot', { reason: STATE.errorMsg });
+    } else {
+      // Had a successful fetch earlier; keep showing it.
+      setStatus('error', { reason: STATE.errorMsg });
+    }
+  } finally {
+    refreshing = false;
+    if (btn) btn.disabled = false;
+  }
+}
+
+// Keep the "updated X min ago" text fresh without re-fetching.
+setInterval(() => {
+  if (STATE.source === 'live' && STATE.lastUpdated) {
+    setStatus('live', { at: STATE.lastUpdated });
+  }
+}, 30 * 1000);
+
+// ============================================================
+// BOOT
+// ============================================================
 document.querySelectorAll('.tab-btn').forEach(btn => {
   btn.addEventListener('click', () => {
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
@@ -765,6 +1266,15 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
     if (target) target.classList.remove('hidden');
   });
 });
+
+document.getElementById('hdr-refresh-btn').addEventListener('click', refresh);
+
+// Initial paint with snapshot so the page isn't blank while the fetch runs,
+// then immediately try the live fetch.
+render(normalize(FALLBACK_DATA));
+setStatus('loading');
+refresh();
+setInterval(refresh, REFRESH_INTERVAL_MS);
 </script>
 
 </body>
