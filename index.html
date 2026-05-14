@@ -894,13 +894,20 @@ function renderServiceMix(data) {
   set('mix-inv-pct', ((inv / tot) * 100).toFixed(1) + '%');
   set('mix-inv-amt', fmt(inv));
 
-  // Caption: name the faster-growing service vs prior month
+  // Caption: highlight whichever service moved better vs prior month.
+  // "growing fastest" only makes sense when the winner is actually up;
+  // when both shrank, the slower shrinker is "declining least."
   if (i > 0) {
     const dSec = ((sec - cy.security[i - 1]) / cy.security[i - 1]) * 100;
     const dInv = ((inv - cy.invision[i - 1]) / cy.invision[i - 1]) * 100;
-    const winner = dInv > dSec ? 'Invision' : 'Security';
-    const winnerDelta = dInv > dSec ? dInv : dSec;
-    set('mix-caption', winner + ' growing fastest (' + fmtPct1(winnerDelta) + ' vs ' + MONTH_NAMES[monthIdx === 0 ? 11 : monthIdx - 1] + ')');
+    const winner = dSec >= dInv ? 'Security' : 'Invision';
+    const winnerDelta = dSec >= dInv ? dSec : dInv;
+    const priorMonth = MONTH_NAMES[monthIdx === 0 ? 11 : monthIdx - 1];
+    let phrase;
+    if      (winnerDelta >  0.1) phrase = winner + ' growing fastest';
+    else if (winnerDelta < -0.1) phrase = winner + ' declining least';
+    else                          phrase = 'Service mix flat';
+    set('mix-caption', phrase + ' (' + fmtPct1(winnerDelta) + ' vs ' + priorMonth + ')');
   } else {
     set('mix-caption', 'First month of the year');
   }
