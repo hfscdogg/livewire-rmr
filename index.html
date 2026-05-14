@@ -1,16 +1,25 @@
 <!-- ==========================================================================
   LIVEWIRE RMR DASHBOARD
   ==========================================================================
-  Data Source: Google Sheets ID 1Zm-0hEHdtpxbmnXpgLSCcsJcsdyOwXQ_agKBAWinglw
+  Data Source: Google Sheets, Published to Web as CSV
+    Source doc:   1Zm-0hEHdtpxbmnXpgLSCcsJcsdyOwXQ_agKBAWinglw
+    Publish ID:   2PACX-1vRPFC6eSYQStRdB-DksbrxLoSiDMDre6O3bWxoDqBBajxD11-MBdp8NyL7UDWizItBWbktpcXYHRnU4
 
   LIVE DATA:
-    The dashboard pulls CSV from each year-tab via the gviz endpoint.
-    The sheet must be shared "Anyone with the link can view" (or wider).
-    Config lives at the top of the <script> block: SHEET_ID, SHEET_TABS,
+    The dashboard fetches each tab's CSV from the publish-to-web endpoint.
+    Config lives at the top of the <script> block: PUBLISH_ID, SHEET_GIDS,
     COLUMN_ALIASES, REFRESH_INTERVAL_MS.
 
+    To add a tab (e.g. 2027): in Sheets, open File > Share > Publish to web,
+    confirm the workbook is published, find the new tab's gid (click the tab
+    and read #gid=NNNN from the URL bar), and add it to SHEET_GIDS below.
+
+    To replace the publish URL: in Sheets, File > Share > Publish to web >
+    Stop publishing, then re-publish; copy the new publish ID out of the URL
+    (the long string between /d/e/ and /pubhtml) into PUBLISH_ID.
+
   FALLBACK:
-    If the fetch fails (sheet private, network, parse error), the dashboard
+    If the fetch fails (publish stopped, network, parse error), the dashboard
     renders the hardcoded snapshot (FALLBACK_DATA, captured Apr 21 2026) and
     the header shows a "Snapshot" badge with the error reason in the tooltip.
 ========================================================================== -->
@@ -439,11 +448,17 @@
 // ============================================================
 // CONFIG — adjust if the sheet structure changes
 // ============================================================
-const SHEET_ID = '1Zm-0hEHdtpxbmnXpgLSCcsJcsdyOwXQ_agKBAWinglw';
+// "Publish to web" ID — the long string between /d/e/ and /pubhtml in the
+// published URL. Distinct from the sheet's own document ID. Re-publishing
+// the workbook generates a new one.
+const PUBLISH_ID = '2PACX-1vRPFC6eSYQStRdB-DksbrxLoSiDMDre6O3bWxoDqBBajxD11-MBdp8NyL7UDWizItBWbktpcXYHRnU4';
 
-// Tab names to fetch, oldest year first. Each tab is one year.
-// The sheet must be shared "Anyone with the link can view".
-const SHEET_TABS = ['2025', '2026'];
+// Year → tab gid. Order = oldest year first. Find a tab's gid by clicking it
+// in the editable sheet and reading the #gid=NNNN suffix in the URL bar.
+const SHEET_GIDS = {
+  '2025': '459814611',
+  '2026': '1292247635',
+};
 
 // Column-header matching (case-insensitive substring). The parser picks
 // the first column whose header contains one of these tokens.
@@ -517,11 +532,11 @@ function set(id, text) {
 // ============================================================
 // CSV FETCH + PARSE
 // ============================================================
-function csvUrl(tab) {
-  // gviz endpoint works for any sheet shared "anyone with the link can view".
-  // Cache-buster prevents stale browser/CDN caches on refresh.
-  return 'https://docs.google.com/spreadsheets/d/' + SHEET_ID +
-    '/gviz/tq?tqx=out:csv&sheet=' + encodeURIComponent(tab) +
+function csvUrl(gid) {
+  // Publish-to-web CSV endpoint. Works anonymously (no Google login).
+  // Cache-buster defeats Google's edge cache + the browser cache on refresh.
+  return 'https://docs.google.com/spreadsheets/d/e/' + PUBLISH_ID +
+    '/pub?output=csv&single=true&gid=' + encodeURIComponent(gid) +
     '&_=' + Date.now();
 }
 
@@ -633,21 +648,24 @@ function monthKey(cell) {
 }
 
 async function fetchLive() {
-  const out = { years: SHEET_TABS.slice() };
-  for (const tab of SHEET_TABS) {
-    const res = await fetch(csvUrl(tab), { cache: 'no-store' });
+  const years = Object.keys(SHEET_GIDS);
+  const out = { years: years.slice() };
+  for (const year of years) {
+    const gid = SHEET_GIDS[year];
+    const res = await fetch(csvUrl(gid), { cache: 'no-store' });
     if (!res.ok) {
-      const hint = res.status === 401 || res.status === 403
-        ? ' — make sure the sheet is shared "Anyone with the link can view".'
+      const hint = res.status === 401 || res.status === 403 || res.status === 404
+        ? ' — has the workbook been re-published since? Check File > Share > Publish to web in Sheets.'
         : '';
-      throw new Error('Sheet "' + tab + '" returned ' + res.status + hint);
+      throw new Error('Tab "' + year + '" (gid ' + gid + ') returned ' + res.status + hint);
     }
     const text = await res.text();
-    // gviz returns an HTML login page (200 OK) when the sheet isn't public.
+    // The publish endpoint sometimes returns an HTML error page (200 OK) when
+    // the publish has been stopped or the gid no longer exists.
     if (text.trim().startsWith('<')) {
-      throw new Error('Sheet "' + tab + '" is not publicly viewable (got HTML, expected CSV).');
+      throw new Error('Tab "' + year + '" (gid ' + gid + ') returned HTML, expected CSV. Re-check the publish settings.');
     }
-    out[tab] = parseTabRows(parseCsv(text), tab);
+    out[year] = parseTabRows(parseCsv(text), year);
   }
   return out;
 }
