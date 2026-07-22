@@ -18,6 +18,13 @@
     Stop publishing, then re-publish; copy the new publish ID out of the URL
     (the long string between /d/e/ and /pubhtml) into PUBLISH_ID.
 
+  REP ATTACHMENT (paid RMR attachment by rep):
+    The "Rep Attachment" dashboard tab reads a sheet tab with one row per rep
+    per month and these columns (header names are matched loosely):
+      Month | Rep | Jobs Closed | Paid RMR Attached | RMR $ Added
+    Until that sheet tab exists and its gid is set in REP_ATTACH_GID below,
+    the dashboard tab shows setup instructions instead of charts.
+
   FALLBACK:
     If the fetch fails (publish stopped, network, parse error), the dashboard
     renders the hardcoded snapshot (FALLBACK_DATA, captured Apr 21 2026) and
@@ -324,6 +331,7 @@
     <button class="tab-btn active" data-tab="trends">Monthly Trends</button>
     <button class="tab-btn" data-tab="yoy">YOY Comparison</button>
     <button class="tab-btn" data-tab="breakdown">Service Breakdown</button>
+    <button class="tab-btn" data-tab="reps">Rep Attachment</button>
     <button class="tab-btn" data-tab="table">Data Table</button>
   </div>
 
@@ -421,6 +429,103 @@
     </div>
   </div>
 
+  <!-- ===== TAB: Rep Attachment ===== -->
+  <div id="tab-reps" class="tab-content hidden">
+
+    <!-- Setup card: shown until the sheet tab exists + gid is configured -->
+    <div id="rep-setup" class="chart-card hidden">
+      <h3 class="font-semibold text-navy font-display mb-2">Set up Paid RMR Attachment by Rep</h3>
+      <p id="rep-setup-reason" class="text-sm text-gray-500 mb-4">This view needs a "Rep Attachment" tab in the RMR Tracker Graph sheet.</p>
+      <ol class="list-decimal list-inside text-sm text-gray-600 space-y-2">
+        <li>In the <span class="font-medium text-navy">RMR Tracker Graph (All Hands)</span> sheet, add a tab named <span class="font-medium text-navy">Rep Attachment</span> with one row per rep per month and this header row:
+          <div class="overflow-x-auto mt-2 mb-1">
+            <table class="text-xs border border-gray-200">
+              <thead><tr class="bg-gray-50 text-gray-600">
+                <th class="py-1.5 px-3 font-medium border-r border-gray-200">Month</th>
+                <th class="py-1.5 px-3 font-medium border-r border-gray-200">Rep</th>
+                <th class="py-1.5 px-3 font-medium border-r border-gray-200">Jobs Closed</th>
+                <th class="py-1.5 px-3 font-medium border-r border-gray-200">Paid RMR Attached</th>
+                <th class="py-1.5 px-3 font-medium">RMR $ Added</th>
+              </tr></thead>
+              <tbody><tr class="text-gray-500">
+                <td class="py-1.5 px-3 border-r border-t border-gray-200">Jan</td>
+                <td class="py-1.5 px-3 border-r border-t border-gray-200">Marshall</td>
+                <td class="py-1.5 px-3 border-r border-t border-gray-200">8</td>
+                <td class="py-1.5 px-3 border-r border-t border-gray-200">5</td>
+                <td class="py-1.5 px-3 border-t border-gray-200">$249.95</td>
+              </tr></tbody>
+            </table>
+          </div>
+          <span class="text-xs text-gray-400">"Paid RMR Attached" counts jobs that closed with a paid plan (Limited Support / $0 plans don't count). "RMR $ Added" is optional.</span>
+        </li>
+        <li>Confirm the workbook is still published: File &gt; Share &gt; Publish to web.</li>
+        <li>Click the new tab and copy its gid from the URL bar (<span class="font-mono text-xs">#gid=NNNN</span>).</li>
+        <li>Paste the gid into <span class="font-mono text-xs">REP_ATTACH_GID</span> at the top of the script in <span class="font-mono text-xs">index.html</span>.</li>
+      </ol>
+    </div>
+
+    <!-- Live content: hidden until rep data loads -->
+    <div id="rep-content" class="hidden">
+      <!-- Summary tiles -->
+      <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-5">
+        <div class="chart-card">
+          <div class="text-sm font-medium text-gray-500 mb-1">🎯 Team Attach Rate</div>
+          <div id="rep-kpi-rate" class="text-2xl font-bold font-display text-navy">—</div>
+          <div id="rep-kpi-rate-caption" class="text-xs text-gray-400 mt-1">—</div>
+        </div>
+        <div class="chart-card">
+          <div class="text-sm font-medium text-gray-500 mb-1">💵 New Paid RMR Added</div>
+          <div id="rep-kpi-rmr" class="text-2xl font-bold font-display text-navy">—</div>
+          <div id="rep-kpi-rmr-caption" class="text-xs text-gray-400 mt-1">—</div>
+        </div>
+        <div class="chart-card">
+          <div class="text-sm font-medium text-gray-500 mb-1">🏆 Top Rep</div>
+          <div id="rep-kpi-top" class="text-2xl font-bold font-display text-navy">—</div>
+          <div id="rep-kpi-top-caption" class="text-xs text-gray-400 mt-1">—</div>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+        <div class="chart-card">
+          <div class="flex items-center justify-between mb-4">
+            <h3 id="rep-bar-title" class="font-semibold text-navy font-display">Paid Attach Rate by Rep</h3>
+          </div>
+          <div style="height:260px;">
+            <canvas id="chart-rep-bar"></canvas>
+          </div>
+        </div>
+        <div class="chart-card">
+          <div class="flex items-center justify-between mb-4">
+            <h3 class="font-semibold text-navy font-display">Monthly Attach Rate</h3>
+            <div id="rep-trend-legend" class="flex flex-wrap gap-3 text-xs text-gray-500"></div>
+          </div>
+          <div style="height:260px;">
+            <canvas id="chart-rep-trend"></canvas>
+          </div>
+        </div>
+      </div>
+
+      <div class="chart-card mt-5">
+        <h3 id="rep-table-title" class="font-semibold text-navy font-display mb-4">Rep Detail</h3>
+        <div class="overflow-x-auto">
+          <table class="text-sm">
+            <thead>
+              <tr class="text-left text-gray-500 border-b border-gray-200">
+                <th class="py-2 px-3 font-medium">Rep</th>
+                <th class="py-2 px-3 font-medium text-right">Jobs Closed</th>
+                <th class="py-2 px-3 font-medium text-right">Paid RMR Attached</th>
+                <th class="py-2 px-3 font-medium text-right">Attach %</th>
+                <th class="py-2 px-3 font-medium text-right">RMR $ Added/mo</th>
+              </tr>
+            </thead>
+            <tbody id="rep-table-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
   <!-- ===== TAB: Data Table ===== -->
   <div id="tab-table" class="tab-content hidden">
     <div class="chart-card">
@@ -468,6 +573,24 @@ const COLUMN_ALIASES = {
   invision: ['invision', 'invis'],
 };
 
+// Paid RMR attachment by rep — gid of the "Rep Attachment" sheet tab.
+// Leave '' until the tab exists; the dashboard shows setup instructions instead.
+// Expected columns (headers matched loosely, case-insensitive):
+//   Month | Rep | Jobs Closed | Paid RMR Attached | RMR $ Added (optional)
+const REP_ATTACH_GID = '';
+
+const REP_COLUMN_ALIASES = {
+  month:    ['month', 'period', 'date'],
+  rep:      ['rep', 'salesperson', 'sales person', 'name'],
+  jobs:     ['jobs', 'closed', 'opportunit', 'projects', 'installs'],
+  attached: ['attached', 'paid rmr', 'with rmr'],
+  rmr:      ['rmr $', 'added', 'monthly'],
+};
+
+// Fixed categorical order (validated for colorblind-safe adjacency on white).
+// Colors follow the rep (first-appearance order in the sheet), never rank.
+const REP_COLORS = ['#1E6FE8', '#F59E0B', '#8B5CF6', '#10B981', '#6B7280'];
+
 const REFRESH_INTERVAL_MS = 5 * 60 * 1000;   // background refresh every 5 min
 
 // ============================================================
@@ -504,6 +627,8 @@ const STATE = {
   lastUpdated: null,         // Date when live fetch succeeded
   errorMsg:    null,
   charts:      {},
+  repData:     null,         // parsed rep attachment data, see parseRepRows()
+  repError:    null,         // last rep-tab fetch/parse error message
 };
 
 Chart.defaults.font.family = "'DM Sans', sans-serif";
@@ -668,6 +793,69 @@ async function fetchLive() {
     out[year] = parseTabRows(parseCsv(text), year);
   }
   return out;
+}
+
+// ============================================================
+// REP ATTACHMENT — paid RMR attachment by rep
+// ============================================================
+// Parse the "Rep Attachment" tab (one row per rep per month) into:
+//   { reps: [names, first-appearance order],
+//     months: [sorted keys, year*12+monthIdx],
+//     byRep: { rep: { key: { jobs, attached, rmr } } } }
+// A missing Year column assumes every row is the same (current) year.
+function parseRepRows(rows) {
+  let headerIdx = -1, cols = null;
+  for (let i = 0; i < rows.length && i < 10; i++) {
+    const headerLower = rows[i].map(c => (c || '').toString().trim().toLowerCase());
+    const rep = findCol(headerLower, REP_COLUMN_ALIASES.rep);
+    const att = findCol(headerLower, REP_COLUMN_ALIASES.attached);
+    if (rep !== -1 && att !== -1) {
+      headerIdx = i;
+      cols = {
+        rep, attached: att,
+        month: findCol(headerLower, REP_COLUMN_ALIASES.month),
+        jobs:  findCol(headerLower, REP_COLUMN_ALIASES.jobs),
+        rmr:   findCol(headerLower, REP_COLUMN_ALIASES.rmr),
+        year:  headerLower.findIndex(h => h === 'year'),
+      };
+      if (cols.month === -1) cols.month = 0;
+      break;
+    }
+  }
+  if (!cols) throw new Error('Rep tab: could not find Rep / Paid RMR Attached columns');
+
+  const reps = [], byRep = {}, monthKeys = new Set();
+  for (let i = headerIdx + 1; i < rows.length; i++) {
+    const r = rows[i];
+    const name = (r[cols.rep] || '').toString().trim();
+    if (!name || /^(total|totals|team|all)$/i.test(name)) continue;
+    const mIdx = monthKey((r[cols.month] || '').toString());
+    if (mIdx == null) continue;
+    const year = cols.year !== -1 ? (parseInt(r[cols.year], 10) || 0) : 0;
+    const key = year * 12 + mIdx;
+    const jobs     = parseNumber(cols.jobs !== -1 ? r[cols.jobs] : null) ?? 0;
+    const attached = parseNumber(r[cols.attached]) ?? 0;
+    const rmr      = parseNumber(cols.rmr !== -1 ? r[cols.rmr] : null) ?? 0;
+    if (!reps.includes(name)) { reps.push(name); byRep[name] = {}; }
+    const cell = byRep[name][key] || { jobs: 0, attached: 0, rmr: 0 };
+    cell.jobs += jobs; cell.attached += attached; cell.rmr += rmr;
+    byRep[name][key] = cell;
+    monthKeys.add(key);
+  }
+  if (!reps.length) throw new Error('Rep tab: no data rows found');
+  return { reps, months: [...monthKeys].sort((a, b) => a - b), byRep };
+}
+
+async function fetchRepLive() {
+  if (!REP_ATTACH_GID) { STATE.repData = null; STATE.repError = null; return; }
+  const res = await fetch(csvUrl(REP_ATTACH_GID), { cache: 'no-store' });
+  if (!res.ok) throw new Error('Rep tab (gid ' + REP_ATTACH_GID + ') returned ' + res.status);
+  const text = await res.text();
+  if (text.trim().startsWith('<')) {
+    throw new Error('Rep tab (gid ' + REP_ATTACH_GID + ') returned HTML, expected CSV. Re-check the publish settings.');
+  }
+  STATE.repData = parseRepRows(parseCsv(text));
+  STATE.repError = null;
 }
 
 // ============================================================
@@ -1214,6 +1402,179 @@ function renderFullTable(data) {
 }
 
 // ============================================================
+// REP ATTACHMENT — render
+// ============================================================
+function repMonthLabel(key, multiYear) {
+  const y = Math.floor(key / 12), m = key % 12;
+  return MONTH_NAMES[m] + (multiYear && y ? " '" + String(y).slice(-2) : '');
+}
+
+function attachPct(attached, jobs) {
+  return jobs > 0 ? (attached / jobs) * 100 : null;
+}
+
+function renderRepSection() {
+  const setup = document.getElementById('rep-setup');
+  const content = document.getElementById('rep-content');
+  if (!setup || !content) return;
+
+  for (const id of ['chart-rep-bar', 'chart-rep-trend']) {
+    if (STATE.charts[id]) { try { STATE.charts[id].destroy(); } catch (_) {} delete STATE.charts[id]; }
+  }
+
+  const rd = STATE.repData;
+  if (!rd || !rd.reps.length) {
+    setup.classList.remove('hidden');
+    content.classList.add('hidden');
+    const reason = document.getElementById('rep-setup-reason');
+    if (reason) {
+      reason.textContent = STATE.repError
+        ? 'The Rep Attachment tab could not be loaded (' + STATE.repError + '). Check the steps below.'
+        : 'This view needs a "Rep Attachment" tab in the RMR Tracker Graph sheet. One-time setup:';
+    }
+    return;
+  }
+  setup.classList.add('hidden');
+  content.classList.remove('hidden');
+
+  const multiYear = new Set(rd.months.map(k => Math.floor(k / 12))).size > 1;
+  const periodLabel = rd.months.length
+    ? repMonthLabel(rd.months[0], multiYear) + '–' + repMonthLabel(rd.months[rd.months.length - 1], multiYear)
+    : '—';
+
+  // Per-rep totals across all months, in sheet order (color follows the rep).
+  const totals = rd.reps.map((name, idx) => {
+    let jobs = 0, attached = 0, rmr = 0;
+    for (const key of rd.months) {
+      const c = rd.byRep[name][key];
+      if (c) { jobs += c.jobs; attached += c.attached; rmr += c.rmr; }
+    }
+    return { name, jobs, attached, rmr, pct: attachPct(attached, jobs), color: REP_COLORS[idx % REP_COLORS.length] };
+  });
+
+  const teamJobs     = totals.reduce((s, t) => s + t.jobs, 0);
+  const teamAttached = totals.reduce((s, t) => s + t.attached, 0);
+  const teamRmr      = totals.reduce((s, t) => s + t.rmr, 0);
+  const teamPct      = attachPct(teamAttached, teamJobs);
+
+  set('rep-kpi-rate', teamPct == null ? '—' : teamPct.toFixed(1) + '%');
+  set('rep-kpi-rate-caption', teamAttached + ' of ' + teamJobs + ' closed jobs · ' + periodLabel);
+  set('rep-kpi-rmr', teamRmr > 0 ? fmt(teamRmr) + '/mo' : '—');
+  set('rep-kpi-rmr-caption', teamRmr > 0 ? 'Recurring revenue attached · ' + periodLabel : 'Add an "RMR $ Added" column to track this');
+  const ranked = totals.filter(t => t.pct != null).sort((a, b) => b.pct - a.pct);
+  set('rep-kpi-top', ranked.length ? ranked[0].name : '—');
+  set('rep-kpi-top-caption', ranked.length
+    ? ranked[0].pct.toFixed(1) + '% attach rate (' + ranked[0].attached + ' of ' + ranked[0].jobs + ' jobs)'
+    : '—');
+  set('rep-bar-title', 'Paid Attach Rate by Rep · ' + periodLabel);
+  set('rep-table-title', 'Rep Detail · ' + periodLabel);
+
+  // Bar chart — attach rate by rep. Identity is carried by the axis labels
+  // and the table below (relief for the lighter brand colors).
+  const barCtx = document.getElementById('chart-rep-bar').getContext('2d');
+  STATE.charts['chart-rep-bar'] = new Chart(barCtx, {
+    type: 'bar',
+    data: {
+      labels: totals.map(t => t.name),
+      datasets: [{
+        data: totals.map(t => t.pct ?? 0),
+        backgroundColor: totals.map(t => t.color),
+        borderRadius: 4,
+        barPercentage: 0.55,
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: '#0D1B2A', titleColor: '#F8F9FA', bodyColor: '#F8F9FA',
+          cornerRadius: 8, displayColors: false,
+          callbacks: {
+            label: it => {
+              const t = totals[it.dataIndex];
+              return t.pct == null ? 'No closed jobs yet'
+                : t.pct.toFixed(1) + '% (' + t.attached + ' of ' + t.jobs + ' jobs)';
+            }
+          }
+        }
+      },
+      scales: {
+        x: { grid: { display: false } },
+        y: { grid: { color: '#F3F4F6' }, min: 0, suggestedMax: 100, ticks: { callback: v => v + '%' } }
+      }
+    }
+  });
+
+  // Trend chart — monthly attach rate per rep (null months break the line).
+  const legend = document.getElementById('rep-trend-legend');
+  if (legend) {
+    legend.innerHTML = totals.map(t =>
+      '<span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-full" style="background:' +
+      t.color + '"></span>' + t.name + '</span>').join('');
+  }
+  const trendCtx = document.getElementById('chart-rep-trend').getContext('2d');
+  STATE.charts['chart-rep-trend'] = new Chart(trendCtx, {
+    type: 'line',
+    data: {
+      labels: rd.months.map(k => repMonthLabel(k, multiYear)),
+      datasets: totals.map(t => ({
+        label: t.name,
+        data: rd.months.map(key => {
+          const c = rd.byRep[t.name][key];
+          return c ? attachPct(c.attached, c.jobs) : null;
+        }),
+        borderColor: t.color, backgroundColor: 'transparent',
+        borderWidth: 2, tension: 0.3, pointRadius: 3, pointBackgroundColor: t.color,
+        spanGaps: false,
+      }))
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: '#0D1B2A', titleColor: '#F8F9FA', bodyColor: '#F8F9FA', cornerRadius: 8,
+          callbacks: {
+            label: it => {
+              const c = STATE.repData.byRep[it.dataset.label][STATE.repData.months[it.dataIndex]];
+              return it.dataset.label + ': ' + it.raw.toFixed(1) + '%' +
+                (c ? ' (' + c.attached + ' of ' + c.jobs + ')' : '');
+            }
+          }
+        }
+      },
+      scales: {
+        x: { grid: { color: '#F3F4F6' } },
+        y: { grid: { color: '#F3F4F6' }, min: 0, suggestedMax: 100, ticks: { callback: v => v + '%' } }
+      }
+    }
+  });
+
+  // Detail table — ranked by attach rate, team total last.
+  const body = document.getElementById('rep-table-body');
+  if (body) {
+    const rows = totals.slice().sort((a, b) => (b.pct ?? -1) - (a.pct ?? -1)).map(t =>
+      '<tr class="border-b border-gray-100 hover:bg-gray-50">' +
+        '<td class="py-2 px-3 font-medium text-gray-700"><span class="inline-block w-2.5 h-2.5 rounded-full mr-2" style="background:' + t.color + '"></span>' + t.name + '</td>' +
+        '<td class="py-2 px-3 text-right">' + t.jobs + '</td>' +
+        '<td class="py-2 px-3 text-right">' + t.attached + '</td>' +
+        '<td class="py-2 px-3 text-right font-bold text-navy">' + (t.pct == null ? '—' : t.pct.toFixed(1) + '%') + '</td>' +
+        '<td class="py-2 px-3 text-right text-gray-500">' + (t.rmr > 0 ? fmt(t.rmr) : '—') + '</td>' +
+      '</tr>');
+    rows.push(
+      '<tr class="bg-gray-50 font-medium">' +
+        '<td class="py-2 px-3 text-navy">Team</td>' +
+        '<td class="py-2 px-3 text-right">' + teamJobs + '</td>' +
+        '<td class="py-2 px-3 text-right">' + teamAttached + '</td>' +
+        '<td class="py-2 px-3 text-right font-bold text-navy">' + (teamPct == null ? '—' : teamPct.toFixed(1) + '%') + '</td>' +
+        '<td class="py-2 px-3 text-right text-gray-500">' + (teamRmr > 0 ? fmt(teamRmr) : '—') + '</td>' +
+      '</tr>');
+    body.innerHTML = rows.join('');
+  }
+}
+
+// ============================================================
 // RENDER
 // ============================================================
 function render(data) {
@@ -1233,6 +1594,7 @@ function render(data) {
   buildServiceLine('chart-invision', 'invision', '#8B5CF6', '139,92,246');
   renderBreakdownTable(data);
   renderFullTable(data);
+  renderRepSection();
 }
 
 // ============================================================
@@ -1266,7 +1628,17 @@ async function refresh() {
       // Had a successful fetch earlier; keep showing it.
       setStatus('error', { reason: STATE.errorMsg });
     }
+  }
+  // Rep attachment tab is optional — its failure never takes down the
+  // main dashboard, it just falls back to the setup card.
+  try {
+    await fetchRepLive();
+  } catch (e) {
+    console.warn('[RMR] Rep tab fetch failed:', e);
+    STATE.repError = e && e.message ? e.message : String(e);
+    STATE.repData = null;
   } finally {
+    try { renderRepSection(); } catch (_) {}
     refreshing = false;
     if (btn) btn.disabled = false;
   }
