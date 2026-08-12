@@ -19,9 +19,12 @@
     (the long string between /d/e/ and /pubhtml) into PUBLISH_ID.
 
   FALLBACK:
-    If the fetch fails (publish stopped, network, parse error), the dashboard
-    renders the hardcoded snapshot (FALLBACK_DATA, captured Apr 21 2026) and
-    the header shows a "Snapshot" badge with the error reason in the tooltip.
+    If the fetch fails (publish stopped, network, parse error) or takes
+    longer than FETCH_TIMEOUT_MS, the dashboard renders the hardcoded
+    snapshot (FALLBACK_DATA, captured Apr 21 2026) and the header shows a
+    "Snapshot" badge with the error reason in the tooltip. The 5-minute
+    background refresh keeps retrying, so the page recovers to Live on its
+    own once the sheet endpoint responds again.
 ========================================================================== -->
 <!DOCTYPE html>
 <html lang="en">
@@ -469,6 +472,8 @@ const COLUMN_ALIASES = {
 };
 
 const REFRESH_INTERVAL_MS = 5 * 60 * 1000;   // background refresh every 5 min
+const FETCH_TIMEOUT_MS    = 20 * 1000;       // per-tab guard: a stalled request
+                                             // must fail fast, not hang the UI
 
 // ============================================================
 // FALLBACK DATA — last-known snapshot, captured Apr 21 2026.
@@ -647,26 +652,44 @@ function monthKey(cell) {
   return null;
 }
 
-async function fetchLive() {
-  const years = Object.keys(SHEET_GIDS);
-  const out = { years: years.slice() };
-  for (const year of years) {
-    const gid = SHEET_GIDS[year];
-    const res = await fetch(csvUrl(gid), { cache: 'no-store' });
+async function fetchTab(year, gid) {
+  // Abort covers both the connection and the body read — Google's publish
+  // endpoint can stall without ever failing, which used to freeze the UI
+  // in the "Loading…" state until a hard reload.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  let text;
+  try {
+    const res = await fetch(csvUrl(gid), { cache: 'no-store', signal: controller.signal });
     if (!res.ok) {
       const hint = res.status === 401 || res.status === 403 || res.status === 404
         ? ' — has the workbook been re-published since? Check File > Share > Publish to web in Sheets.'
         : '';
       throw new Error('Tab "' + year + '" (gid ' + gid + ') returned ' + res.status + hint);
     }
-    const text = await res.text();
-    // The publish endpoint sometimes returns an HTML error page (200 OK) when
-    // the publish has been stopped or the gid no longer exists.
-    if (text.trim().startsWith('<')) {
-      throw new Error('Tab "' + year + '" (gid ' + gid + ') returned HTML, expected CSV. Re-check the publish settings.');
+    text = await res.text();
+  } catch (e) {
+    if (controller.signal.aborted) {
+      throw new Error('Tab "' + year + '" (gid ' + gid + ') timed out after ' +
+        (FETCH_TIMEOUT_MS / 1000) + 's — Google Sheets did not respond.');
     }
-    out[year] = parseTabRows(parseCsv(text), year);
+    throw e;
+  } finally {
+    clearTimeout(timer);
   }
+  // The publish endpoint sometimes returns an HTML error page (200 OK) when
+  // the publish has been stopped or the gid no longer exists.
+  if (text.trim().startsWith('<')) {
+    throw new Error('Tab "' + year + '" (gid ' + gid + ') returned HTML, expected CSV. Re-check the publish settings.');
+  }
+  return parseTabRows(parseCsv(text), year);
+}
+
+async function fetchLive() {
+  const years = Object.keys(SHEET_GIDS);
+  const tabs = await Promise.all(years.map(y => fetchTab(y, SHEET_GIDS[y])));
+  const out = { years: years.slice() };
+  years.forEach((y, i) => { out[y] = tabs[i]; });
   return out;
 }
 
@@ -720,10 +743,10 @@ function renderHeader(data) {
   const currentYear = data.years[data.years.length - 1];
   const cy = data[currentYear];
   const monthIdx = MONTH_NAMES.indexOf(cy.months[cy.months.length - 1]);
-  const nextMonthIdx = (monthIdx + 1) % 12;
-  const nextYear = nextMonthIdx === 0 ? (parseInt(currentYear, 10) + 1) : currentYear;
-  set('hdr-period',
-    fmtMonthYear(nextMonthIdx, nextYear) + ' · Data through ' + fmtMonthYear(monthIdx, currentYear));
+  // Just state what the data covers. The old "next month · Data through
+  // last month" format ("Apr 2026 · Data through Mar 2026") read like a
+  // backwards date range and confused people whenever the data was stale.
+  set('hdr-period', 'Data through ' + fmtMonthYear(monthIdx, currentYear));
   set('kpi-section-title', 'Current Month · ' + fmtMonthYear(monthIdx, currentYear));
 }
 
@@ -1258,9 +1281,14 @@ async function refresh() {
     console.warn('[RMR] Live fetch failed:', e);
     STATE.errorMsg = e && e.message ? e.message : String(e);
     if (STATE.source !== 'live') {
-      // Never rendered live successfully — show the snapshot.
-      render(normalize(FALLBACK_DATA));
-      STATE.source = 'snapshot';
+      // Never rendered live successfully — show the snapshot. Guard the
+      // render so a rendering bug can't leave the status stuck on Loading.
+      try {
+        render(normalize(FALLBACK_DATA));
+        STATE.source = 'snapshot';
+      } catch (renderErr) {
+        console.error('[RMR] Snapshot render failed:', renderErr);
+      }
       setStatus('snapshot', { reason: STATE.errorMsg });
     } else {
       // Had a successful fetch earlier; keep showing it.
